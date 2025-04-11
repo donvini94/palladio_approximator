@@ -25,6 +25,8 @@
             scikit-learn
             pandas
             tqdm
+            numpy
+            joblib
           ]
         );
       in

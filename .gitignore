@@ -18,3 +18,5 @@ data/
 PCMs/
 csv/
 tpcm/
+models/
+*.pkl
