@@ -1,53 +1,44 @@
 {
-  description = "Palladio Performance Prediction MVP";
+  description = "Python development environment with Poetry";
 
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs";
-    flake-utils.url = "github:numtide/flake-utils";
-  };
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs";
 
   outputs =
+    { self, nixpkgs }:
     {
-      self,
-      nixpkgs,
-      flake-utils,
-    }:
-    flake-utils.lib.eachDefaultSystem (
-      system:
-      let
-        pkgs = import nixpkgs {
-          inherit system;
-        };
-        python = pkgs.python312;
-        pythonPackages = python.withPackages (
-          ps: with ps; [
-            torch
-            scikit-learn
-            pandas
-            tqdm
-            numpy
-            joblib
-          ]
-        );
-      in
-      {
-        devShells.default = pkgs.mkShell {
-          buildInputs = [
-            pythonPackages
-            pkgs.poetry
-          ];
+      devShells = {
+        x86_64-linux.default =
+          let
+            pkgs = import nixpkgs { system = "x86_64-linux"; };
+            python = pkgs.python312;
+            pythonPackages = python.withPackages (
+              ps: with ps; [
+                torch
+                scikit-learn
+                pandas
+                tqdm
+                numpy
+                joblib
+              ]
+            );
+          in
+          pkgs.mkShell {
+            buildInputs = [
+              pkgs.python312
+              pkgs.poetry
+              pythonPackages
+            ];
+            shellHook = ''
+              # Ensure Poetry uses the virtual environment in the project folder
+              export POETRY_VIRTUALENVS_IN_PROJECT=true
 
-          shellHook = ''
-            export POETRY_VIRTUALENVS_IN_PROJECT=true
-
-            if [ ! -f "pyproject.toml" ]; then
-              poetry init --no-interaction --name dsl_predictor
-              echo "Poetry project initialized with pyproject.toml"
-            fi
-
-            echo "✅ Environment ready. You can run: python train.py --root_dir path/to/top_level_directory/"
-          '';
-        };
-      }
-    );
+              # Initialize Poetry if not already done
+              if [ ! -f "pyproject.toml" ]; then
+                poetry init --no-interaction --name tcpm_generator
+                echo "Poetry project initialized with pyproject.toml"
+              fi
+            '';
+          };
+      };
+    };
 }
