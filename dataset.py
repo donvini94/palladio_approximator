@@ -53,4 +53,9 @@ def load_dataset(data_dir):
     val_end = train_end + int(n * 0.15)
     print("No of samples: ", len(samples))
 
+    # Save all samples to a CSV file for inspection/debugging
+    output_path = os.path.join(data_dir, "all_samples.csv")
+    pd.DataFrame(samples).to_csv(output_path, index=False)
+    print(f"Saved all samples to: {output_path}")
+
     return samples[:train_end], samples[train_end:val_end], samples[val_end:]
