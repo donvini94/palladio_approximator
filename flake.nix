@@ -30,10 +30,26 @@
       devShells.${system}.default = pkgs.mkShell {
         packages = [
           pythonEnv
+          pkgs.uv
         ];
 
         shellHook = ''
+          export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
           echo "Torch CUDA available: $(python -c 'import torch; print(torch.cuda.is_available())')"
+
+          # Create uv environment in .venv if it doesn't exist
+          if [ ! -d .venv ]; then
+            echo "[INFO] Creating .venv using uv..."
+            uv venv .venv
+          fi
+
+          # Activate it
+          source .venv/bin/activate
+
+          # Sync dependencies if needed
+          if [ -f requirements.txt ]; then
+            uv pip install -r requirements.txt
+          fi
         '';
       };
     };
