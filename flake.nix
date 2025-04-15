@@ -1,44 +1,40 @@
 {
-  description = "Python development environment with Poetry";
+  description = "Python development environment with CUDA-enabled PyTorch";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
 
   outputs =
     { self, nixpkgs }:
-    {
-      devShells = {
-        x86_64-linux.default =
-          let
-            pkgs = import nixpkgs { system = "x86_64-linux"; };
-            python = pkgs.python312;
-            pythonPackages = python.withPackages (
-              ps: with ps; [
-                torch
-                scikit-learn
-                pandas
-                tqdm
-                numpy
-                joblib
-              ]
-            );
-          in
-          pkgs.mkShell {
-            buildInputs = [
-              pkgs.python312
-              pkgs.poetry
-              pythonPackages
-            ];
-            shellHook = ''
-              # Ensure Poetry uses the virtual environment in the project folder
-              export POETRY_VIRTUALENVS_IN_PROJECT=true
+    let
+      system = "x86_64-linux";
 
-              # Initialize Poetry if not already done
-              if [ ! -f "pyproject.toml" ]; then
-                poetry init --no-interaction --name tcpm_generator
-                echo "Poetry project initialized with pyproject.toml"
-              fi
-            '';
-          };
+      pkgs = import nixpkgs {
+        inherit system;
+        config.allowUnfree = true;
+      };
+
+      pythonEnv = pkgs.python312.withPackages (
+        ps: with ps; [
+          scikit-learn
+          pandas
+          tqdm
+          numpy
+          joblib
+          transformers
+          pytorchWithCuda
+        ]
+      );
+
+    in
+    {
+      devShells.${system}.default = pkgs.mkShell {
+        packages = [
+          pythonEnv
+        ];
+
+        shellHook = ''
+          echo "Torch CUDA available: $(python -c 'import torch; print(torch.cuda.is_available())')"
+        '';
       };
     };
 }
