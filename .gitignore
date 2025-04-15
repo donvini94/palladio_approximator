@@ -20,3 +20,4 @@ csv/
 tpcm/
 models/
 *.pkl
+mlruns/
