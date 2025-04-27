@@ -21,3 +21,4 @@ tpcm/
 models/
 *.pkl
 mlruns/
+.projectile

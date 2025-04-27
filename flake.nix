@@ -22,6 +22,8 @@
           joblib
           transformers
           pytorchWithCuda
+          seaborn
+          tiktoken # some embedding models need it
         ]
       );
 
