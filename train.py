@@ -1,7 +1,12 @@
 import argparse
 from dataset import load_dataset
 from dataset import build_time_series_dataset
-from feature_extraction import build_tfidf_features, build_bert_features
+from feature_extraction import (
+    build_tfidf_features,
+    build_bert_features,
+    build_longformer_features,
+    build_chunk_aware_features,
+)
 from timeseries_features import build_timeseries_tfidf, build_timeseries_bert
 from models.rf_model import train_random_forest
 from models.linear_model import train_linear_model
@@ -27,10 +32,23 @@ def main(args):
             device = "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
             X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model = (
                 build_bert_features(
-                    train_samples, val_samples, test_samples, device=device
+                    train_samples,
+                    val_samples,
+                    test_samples,
+                    device=device,
+                    chunking_strategy="hierarchical",  # or "average"
                 )
             )
             embedding_model = (tokenizer, model)
+        elif args.embedding == "chunk":
+
+            device = "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
+            # For DSL-aware processing
+            X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model = (
+                build_chunk_aware_features(
+                    train_samples, val_samples, test_samples, device=device
+                )
+            )
         elif args.embedding == "longformer":
 
             device = "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
