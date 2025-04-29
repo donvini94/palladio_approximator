@@ -22,3 +22,4 @@ models/
 *.pkl
 mlruns/
 .projectile
+*.png

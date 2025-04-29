@@ -1,0 +1,11 @@
+scikit-learn
+pandas
+tqdm
+numpy
+joblib
+transformers
+mlflow
+seaborn
+tiktoken
+matplotlib
+torch
