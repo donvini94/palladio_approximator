@@ -1,29 +1,21 @@
 
-FROM	pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
-ENV	DEBIAN_FRONTEND	noninteractive
-ENV	TZ	Etc/UTC
+FROM	nvidia/cuda:12.0.1-cudnn8-runtime-ubuntu22.04
 WORKDIR	/app
+ENV	DEBIAN_FRONTEND	noninteractive
+ENV	PYTHONUNBUFFERED	1
+ENV	PATH	"/usr/local/cuda/bin:${PATH}"
+ENV	LD_LIBRARY_PATH	"/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
 RUN	apt-get update && apt-get install -y \
-	--no-install-recommends \
+	python3 \
+	python3-pip \
+	python3-dev \
 	git \
-	curl \
 	wget \
-	build-essential \
-	libboost-all-dev \
-	software-properties-common \
-	ca-certificates \
-	&& apt-get clean \
 	&& rm -rf /var/lib/apt/lists/*
-ENV	PATH	/opt/conda/bin:$PATH
-COPY	requirements.txt	.
-RUN	pip install --no-cache-dir -r requirements.txt
-RUN	pip install --no-cache-dir     scikit-learn     pandas     tqdm     numpy     joblib     transformers     mlflow     seaborn     tiktoken     matplotlib
-COPY	.	.
-RUN	mkdir -p data/dsl_models data/measurements models
-COPY	models/torch_model.py	models/gpu_rf_model.py	models/
-ENV	PYTORCH_CUDA_ALLOC_CONF	max_split_size_mb:512
-COPY	docker-entrypoint.sh	/docker-entrypoint.sh
-RUN	chmod +x /docker-entrypoint.sh
-EXPOSE	8888
-ENTRYPOINT	["/docker-entrypoint.sh"]
-CMD	["/bin/bash"]
+RUN	pip3 install --no-cache-dir --upgrade pip setuptools wheel
+COPY	requirements.txt	/app/
+RUN	pip3 install --no-cache-dir -r requirements.txt
+COPY	.	/app/
+ENV	NVIDIA_VISIBLE_DEVICES	all
+ENV	NVIDIA_DRIVER_CAPABILITIES	compute,utility
+CMD	["bash"]

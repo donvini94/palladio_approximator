@@ -1,15 +1,22 @@
+version: '3.8'
+
 services:
-  palladio-approximator:
-    build: .
+  palladio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: palladio_approximator
+    container_name: palladio_approximator
     volumes:
       - .:/app
       - ./data:/app/data
+      - ./mlruns:/app/mlruns
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: all
+              count: 1
               capabilities: [gpu]
-    stdin_open: true  # Keep stdin open
-    tty: true         # Allocate a pseudo-TTY

@@ -10,23 +10,7 @@ from feature_extraction import (
 from timeseries_features import build_timeseries_tfidf, build_timeseries_bert
 from models.rf_model import train_random_forest
 from models.linear_model import train_linear_model
-
-# Import the GPU-accelerated models if available
-try:
-    from models.torch_model import train_torch_regressor
-
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
-    print("WARNING: PyTorch regression model not available")
-
-try:
-    from models.gpu_rf_model import train_gpu_random_forest
-
-    RAPIDS_AVAILABLE = True
-except ImportError:
-    RAPIDS_AVAILABLE = False
-    print("WARNING: RAPIDS GPU acceleration not available")
+from models.torch_model import train_torch_regressor
 
 from evaluate import evaluate_model
 import joblib
@@ -250,26 +234,7 @@ def main(args):
 
     # Train model based on selected type
     if args.model == "rf":
-        if args.use_gpu and RAPIDS_AVAILABLE:
-            print("Using GPU-accelerated Random Forest via RAPIDS...")
-            try:
-                model = train_gpu_random_forest(
-                    X_train, y_train, n_estimators=args.n_estimators
-                )
-            except Exception as e:
-                print(f"GPU Random Forest failed: {e}")
-                print("Falling back to CPU Random Forest...")
-                model = train_random_forest(
-                    X_train, y_train, n_estimators=args.n_estimators
-                )
-        else:
-            if args.use_gpu and not RAPIDS_AVAILABLE:
-                warnings.warn(
-                    "GPU acceleration requested but RAPIDS not available. Using CPU Random Forest."
-                )
-            model = train_random_forest(
-                X_train, y_train, n_estimators=args.n_estimators
-            )
+        model = train_random_forest(X_train, y_train, n_estimators=args.n_estimators)
 
     elif args.model == "torch":
         if not TORCH_AVAILABLE:
