@@ -5,6 +5,7 @@ from feature_extraction import (
     build_tfidf_features,
     build_bert_features,
     build_longformer_features,
+    build_chunk_aware_features,
 )
 from timeseries_features import build_timeseries_tfidf, build_timeseries_bert
 from models.rf_model import train_random_forest
@@ -119,6 +120,31 @@ def main(args):
                 X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model = (
                     build_longformer_features(
                         train_samples, val_samples, test_samples, device=device
+                    )
+                )
+                embedding_model = (tokenizer, model)
+
+                print("Feature extraction completed successfully")
+                print(
+                    f"Feature shapes: X_train={X_train.shape}, y_train={y_train.shape}"
+                )
+
+                # Free up memory
+                if device == "cuda":
+                    print("Clearing GPU cache...")
+                    torch.cuda.empty_cache()
+            elif args.embedding == "chunk":
+                device = (
+                    "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
+                )
+                print(f"Using device: {device}")
+                X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model = (
+                    build_chunk_aware_features(
+                        train_samples,
+                        val_samples,
+                        test_samples,
+                        device=device,
+                        model_name="allenai/longformer-base-4096",
                     )
                 )
                 embedding_model = (tokenizer, model)
@@ -308,7 +334,10 @@ if __name__ == "__main__":
         "--model", type=str, choices=["rf", "ridge", "lasso", "torch"], default="rf"
     )
     parser.add_argument(
-        "--embedding", type=str, choices=["tfidf", "bert", "longformer"], default="bert"
+        "--embedding",
+        type=str,
+        choices=["tfidf", "bert", "longformer", "chunk"],
+        default="bert",
     )
     parser.add_argument(
         "--prediction_mode",
@@ -356,7 +385,7 @@ if __name__ == "__main__":
         use_mlflow=True,
         use_gpu=True,
         save_features=True,
-        load_features=True,
+        load_features=False,
     )
 
     print("Parsing arguments...")

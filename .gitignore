@@ -18,7 +18,6 @@ data/
 PCMs/
 csv/
 tpcm/
-models/
 *.pkl
 mlruns/
 .projectile
