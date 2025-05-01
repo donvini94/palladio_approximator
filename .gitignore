@@ -23,3 +23,4 @@ models/
 mlruns/
 .projectile
 *.png
+*.pt

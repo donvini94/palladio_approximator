@@ -40,7 +40,7 @@ def build_bert_features(
     test_samples,
     model_name="microsoft/codebert-base",
     device="cpu",
-    batch_size=8,
+    batch_size=16,
     chunking_strategy="hierarchical",
 ):
     """
@@ -245,8 +245,8 @@ def build_longformer_features(
     test_samples,
     model_name="allenai/longformer-base-4096",
     device="cpu",
-    batch_size=2,  # bigger inputs = smaller batch size
-    use_global_attention=True,
+    batch_size=8,  # bigger inputs = smaller batch size
+    use_global_attention=False,  # Default to False to avoid errors with different implementations
 ):
     """
     Builds Longformer embeddings and target arrays from dataset samples.
@@ -274,15 +274,26 @@ def build_longformer_features(
             ).to(device)
 
             # Set global attention on special tokens and first tokens if requested
-            if (
-                use_global_attention
-                and hasattr(model, "config")
-                and "longformer" in model.config.architectures[0].lower()
-            ):
-                # Create global attention mask - give attention to [CLS] token
-                global_attention_mask = torch.zeros_like(inputs["attention_mask"])
-                # Set global attention on [CLS] token
-                global_attention_mask[:, 0] = 1
+            if use_global_attention and hasattr(model, "config"):
+                # Check if architectures attribute exists and contains longformer
+                is_longformer = False
+                if (
+                    hasattr(model.config, "architectures")
+                    and model.config.architectures
+                ):
+                    is_longformer = any(
+                        "longformer" in arch.lower()
+                        for arch in model.config.architectures
+                    )
+                # Also check model name as a backup
+                if not is_longformer and "longformer" in model_name.lower():
+                    is_longformer = True
+
+                if is_longformer:
+                    # Create global attention mask - give attention to [CLS] token
+                    global_attention_mask = torch.zeros_like(inputs["attention_mask"])
+                    # Set global attention on [CLS] token
+                    global_attention_mask[:, 0] = 1
 
                 # Optionally set global attention on special syntax elements common in DSL
                 for keyword in [
@@ -317,15 +328,32 @@ def build_longformer_features(
 
             with torch.no_grad():
                 # Handle different Longformer implementations
-                if (
-                    use_global_attention
-                    and "global_attention_mask" in inputs
-                    and hasattr(model, "forward")
-                    and "global_attention_mask" in model.forward.__code__.co_varnames
-                ):
-                    outputs = model(**inputs)
-                else:
-                    # Fall back to standard forward pass without global attention
+                try:
+                    if (
+                        use_global_attention
+                        and "global_attention_mask" in inputs
+                        and hasattr(model, "forward")
+                    ):
+                        # Check if model.forward accepts global_attention_mask
+                        if (
+                            hasattr(model.forward, "__code__")
+                            and "global_attention_mask"
+                            in model.forward.__code__.co_varnames
+                        ):
+                            outputs = model(**inputs)
+                        else:
+                            # Fall back to standard forward pass without global attention
+                            if "global_attention_mask" in inputs:
+                                del inputs["global_attention_mask"]
+                            outputs = model(**inputs)
+                    else:
+                        # Fall back to standard forward pass without global attention
+                        if "global_attention_mask" in inputs:
+                            del inputs["global_attention_mask"]
+                        outputs = model(**inputs)
+                except Exception as e:
+                    print(f"Error during model forward pass: {e}")
+                    # As a final fallback, try without any special handling
                     if "global_attention_mask" in inputs:
                         del inputs["global_attention_mask"]
                     outputs = model(**inputs)
@@ -354,7 +382,7 @@ def build_chunk_aware_features(
     test_samples,
     model_name="microsoft/codebert-base",
     device="cpu",
-    batch_size=8,
+    batch_size=16,
 ):
     """
     Builds features that are aware of the DSL structure by extracting key sections
