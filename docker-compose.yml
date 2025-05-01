@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   palladio:
     build:
@@ -13,10 +11,12 @@ services:
       - ./mlruns:/app/mlruns
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
+    # GPU support using the format from your working project
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+              count: all
+              capabilities:
+                - gpu

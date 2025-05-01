@@ -1,18 +1,34 @@
 #!/bin/bash
 
 if [[ "$1" == "build" ]]; then
-    docker compose build
+    # Build using docker build instead of docker-compose
+    docker build -t palladio_approximator .
     exit 0
 fi
 
 if [[ "$1" == "bash" ]]; then
-    docker compose run --rm palladio bash
+    # Start a bash shell using the working GPU syntax
+    docker run --rm -it \
+        --device=nvidia.com/gpu=all \
+        -v "$(pwd)":/app \
+        -v "$(pwd)/data":/app/data \
+        -v "$(pwd)/mlruns":/app/mlruns \
+        -w /app \
+        palladio_approximator bash
     exit 0
 fi
 
 if [[ "$1" == "check-gpu" ]]; then
-    docker compose run --rm palladio nvidia-smi
-    docker compose run --rm palladio python3 -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}'); print(f'GPU count: {torch.cuda.device_count()}'); print(f'GPU name: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"None\"}')"
+    # Check GPU using the working syntax
+    echo "Checking nvidia-smi..."
+    docker run --rm -it \
+        --device=nvidia.com/gpu=all \
+        palladio_approximator nvidia-smi
+
+    echo -e "\nChecking PyTorch GPU access..."
+    docker run --rm -it \
+        --device=nvidia.com/gpu=all \
+        palladio_approximator python3 -c "import torch; print(f'PyTorch version: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}'); print(f'GPU count: {torch.cuda.device_count()}'); print(f'GPU name: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"None\"}')"
     exit 0
 fi
 
@@ -22,7 +38,14 @@ if [[ "$1" == "train" ]]; then
     EMBEDDING=${3:-tfidf}
     MODE=${4:-summary}
 
-    docker compose run --rm palladio python3 train.py \
+    # Run training using the working GPU syntax
+    docker run --rm -it \
+        --device=nvidia.com/gpu=all \
+        -v "$(pwd)":/app \
+        -v "$(pwd)/data":/app/data \
+        -v "$(pwd)/mlruns":/app/mlruns \
+        -w /app \
+        palladio_approximator python3 train.py \
         --model $MODEL \
         --embedding $EMBEDDING \
         --prediction_mode $MODE
@@ -31,7 +54,14 @@ fi
 
 if [[ "$1" == "mlflow" ]]; then
     # Start MLflow server on port 5000
-    docker compose run --rm -p 5000:5000 palladio mlflow ui --host 0.0.0.0 --port 5000
+    docker run --rm -it \
+        --device=nvidia.com/gpu=all \
+        -v "$(pwd)":/app \
+        -v "$(pwd)/data":/app/data \
+        -v "$(pwd)/mlruns":/app/mlruns \
+        -p 5000:5000 \
+        -w /app \
+        palladio_approximator mlflow ui --host 0.0.0.0 --port 5000
     exit 0
 fi
 
