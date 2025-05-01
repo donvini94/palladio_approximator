@@ -237,8 +237,6 @@ def main(args):
         model = train_random_forest(X_train, y_train, n_estimators=args.n_estimators)
 
     elif args.model == "torch":
-        if not TORCH_AVAILABLE:
-            raise ImportError("PyTorch model requested but torch_model.py not found")
 
         device = "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
         print(f"Training PyTorch model on {device}...")
