@@ -1,13 +1,9 @@
 import argparse
 from dataset import load_dataset
-from dataset import build_time_series_dataset
 from feature_extraction import (
     build_tfidf_features,
     build_bert_features,
-    build_longformer_features,
-    build_chunk_aware_features,
 )
-from timeseries_features import build_timeseries_tfidf, build_timeseries_bert
 from models.rf_model import train_random_forest
 from models.linear_model import train_linear_model
 from models.torch_model import train_torch_regressor
@@ -96,17 +92,6 @@ def main(args):
                     )
                 )
                 embedding_model = (tokenizer, model)
-            elif args.embedding == "longformer":
-                device = (
-                    "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
-                )
-                print(f"Using device: {device}")
-                X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model = (
-                    build_longformer_features(
-                        train_samples, val_samples, test_samples, device=device
-                    )
-                )
-                embedding_model = (tokenizer, model)
 
                 print("Feature extraction completed successfully")
                 print(
@@ -117,67 +102,11 @@ def main(args):
                 if device == "cuda":
                     print("Clearing GPU cache...")
                     torch.cuda.empty_cache()
-            elif args.embedding == "chunk":
-                device = (
-                    "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
-                )
-                print(f"Using device: {device}")
-                X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model = (
-                    build_chunk_aware_features(
-                        train_samples,
-                        val_samples,
-                        test_samples,
-                        device=device,
-                        model_name="allenai/longformer-base-4096",
-                    )
-                )
-                embedding_model = (tokenizer, model)
-
-                print("Feature extraction completed successfully")
-                print(
-                    f"Feature shapes: X_train={X_train.shape}, y_train={y_train.shape}"
-                )
-
-                # Free up memory
-                if device == "cuda":
-                    print("Clearing GPU cache...")
-                    torch.cuda.empty_cache()
-            else:
-                raise ValueError(
-                    "Unsupported embedding type. Choose 'tfidf', 'bert', or 'longformer'"
-                )
-
-        elif args.prediction_mode == "timeseries":
-            print("Building time series dataset...")
-            X_train_raw, X_val_raw, X_test_raw, y_train, y_val, y_test, *_ = (
-                build_time_series_dataset(args.data_dir)
-            )
-
-            if args.embedding == "tfidf":
-                X_train, tfidf_vectorizer = build_timeseries_tfidf(X_train_raw)
-                X_val, _ = build_timeseries_tfidf(X_val_raw, tfidf_vectorizer)
-                X_test, _ = build_timeseries_tfidf(X_test_raw, tfidf_vectorizer)
-                embedding_model = tfidf_vectorizer
-            elif args.embedding == "bert":
-                device = (
-                    "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
-                )
-                X_train, tokenizer, model = build_timeseries_bert(
-                    X_train_raw, device=device
-                )
-                X_val, _, _ = build_timeseries_bert(
-                    X_val_raw, tokenizer=tokenizer, model=model, device=device
-                )
-                X_test, _, _ = build_timeseries_bert(
-                    X_test_raw, tokenizer=tokenizer, model=model, device=device
-                )
-                embedding_model = (tokenizer, model)
             else:
                 raise ValueError("Unsupported embedding type. Choose 'tfidf' or 'bert'")
+
         else:
-            raise ValueError(
-                "Unsupported prediction mode. Choose 'summary' or 'timeseries'"
-            )
+            raise ValueError("Unsupported prediction mode. Choose 'summary' ")
 
         # Save embeddings as checkpoint if requested
         if args.save_features:
@@ -299,13 +228,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--embedding",
         type=str,
-        choices=["tfidf", "bert", "longformer", "chunk"],
+        choices=["tfidf", "bert"],
         default="bert",
     )
     parser.add_argument(
         "--prediction_mode",
         type=str,
-        choices=["summary", "timeseries"],
+        choices=["summary"],
         default="summary",
     )
     parser.add_argument("--n_estimators", type=int, default=100)
