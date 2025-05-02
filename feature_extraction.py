@@ -4,6 +4,11 @@ from transformers import AutoTokenizer, AutoModel, logging
 import torch
 from tqdm import tqdm
 import warnings
+import os
+
+# Set tokenizers parallelism explicitly before import/usage
+# This prevents the warning when using DataLoader with num_workers > 0
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # Filter out specific warnings for cleaner output
 logging.set_verbosity_error()  # Only show errors from transformers
@@ -18,34 +23,101 @@ def extract_targets(df):
     return df[["avg_resp_time", "min_resp_time", "max_resp_time"]].to_numpy()
 
 
-def build_tfidf_features(train_samples, val_samples, test_samples):
+def build_tfidf_features(train_samples, val_samples, test_samples, max_features=None, apply_truncated_svd=True, n_components=2000):
     """
     Builds TF-IDF feature matrices and target arrays from dataset samples.
+    Optimized for high-quality features with optional dimensionality reduction.
 
     Args:
         train_samples: Training data samples (DataFrame)
         val_samples: Validation data samples (DataFrame)
         test_samples: Test data samples (DataFrame)
+        max_features: Maximum number of features to extract with TF-IDF (None for all features)
+        apply_truncated_svd: Whether to apply dimensionality reduction
+        n_components: Number of components to keep if using SVD
 
     Returns:
-        X_train, y_train, X_val, y_val, X_test, y_test, vectorizer
+        X_train, y_train, X_val, y_val, X_test, y_test, embedding_model
     """
     # Extract DSL text
     train_texts = train_samples["tpcm_text"].tolist()
     val_texts = val_samples["tpcm_text"].tolist()
     test_texts = test_samples["tpcm_text"].tolist()
 
-    # Create vectorizer and transform text
-    vectorizer = TfidfVectorizer()
+    # Create TF-IDF vectorizer with enhanced parameters for better feature quality
+    print(f"Creating TF-IDF vectors with max_features={max_features}...")
+    
+    # Create a high-quality TF-IDF vectorizer
+    # - sublinear_tf: Apply sublinear scaling (logarithmic) to term frequencies
+    # - min_df: Ignore terms that appear in less than 3 documents
+    # - max_df: Ignore terms that appear in more than 95% of documents (likely boilerplate)
+    # - norm: L2 normalization of vectors for better numerical stability
+    # - use_idf: Apply inverse document frequency weighting
+    # - smooth_idf: Add 1 to document frequencies to prevent division by zero
+    # - ngram_range: Include both unigrams and bigrams for better feature representation
+    vectorizer = TfidfVectorizer(
+        max_features=max_features,
+        sublinear_tf=True,
+        min_df=3,
+        max_df=0.95,
+        norm='l2',
+        use_idf=True,
+        smooth_idf=True,
+        ngram_range=(1, 2)  # Include unigrams and bigrams
+    )
+    
+    # Fit vectorizer and transform text
     X_train = vectorizer.fit_transform(train_texts)
     X_val = vectorizer.transform(val_texts)
     X_test = vectorizer.transform(test_texts)
+    
+    print(f"TF-IDF features shape: {X_train.shape}")
+    
+    # Apply dimensionality reduction if requested
+    if apply_truncated_svd and n_components < X_train.shape[1]:
+        from sklearn.decomposition import TruncatedSVD
+        print(f"Applying TruncatedSVD to reduce dimensions from {X_train.shape[1]} to {n_components}...")
+        
+        # Check if we have enough samples for the requested components
+        actual_n_components = min(n_components, min(X_train.shape) - 1)
+        if actual_n_components != n_components:
+            print(f"Reducing n_components to {actual_n_components} due to sample size constraints")
+            n_components = actual_n_components
+        
+        # Apply advanced SVD for high-quality dimensionality reduction
+        # - High n_iter value for better convergence
+        # - Randomized algorithm for faster processing of large matrices
+        svd = TruncatedSVD(
+            n_components=n_components,
+            n_iter=10,  # More iterations for better convergence
+            random_state=42,
+            algorithm='randomized'
+        )
+        
+        # Transform data
+        X_train = svd.fit_transform(X_train)
+        X_val = svd.transform(X_val)
+        X_test = svd.transform(X_test)
+        
+        print(f"After dimensionality reduction: {X_train.shape}")
+        explained_variance = svd.explained_variance_ratio_.sum()
+        print(f"Explained variance: {explained_variance:.2%}")
+        
+        # If explained variance is too low, consider not using SVD
+        if explained_variance < 0.5:
+            print(f"WARNING: Low explained variance ({explained_variance:.2%}). Consider reducing n_components or skipping SVD.")
+        
+        # Create combined model for inference
+        embedding_model = (vectorizer, svd)
+    else:
+        embedding_model = vectorizer
 
+    # Extract targets
     y_train = extract_targets(train_samples)
     y_val = extract_targets(val_samples)
     y_test = extract_targets(test_samples)
 
-    return X_train, y_train, X_val, y_val, X_test, y_test, vectorizer
+    return X_train, y_train, X_val, y_val, X_test, y_test, embedding_model
 
 
 def build_bert_features(
@@ -135,6 +207,14 @@ def build_bert_features(
     # For RTX 3090, we can use larger chunk sizes and process more chunks in parallel
     max_chunks = 12  # Increase from 8 to 12 for RTX 3090
     max_chars = 3000  # Increase from 2000 to 3000 characters per chunk
+    
+    # Define worker init function for DataLoader if needed
+    def worker_init_fn(worker_id):
+        # Each worker should have a different seed but deterministic behavior
+        np.random.seed(42 + worker_id)
+        # Ensure tokenizers know they're in a subprocess
+        if "TOKENIZERS_PARALLELISM" not in os.environ:
+            os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     def encode_with_chunks(df):
         """

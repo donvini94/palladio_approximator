@@ -4,6 +4,10 @@ This file implements a neural network that can be used as a substitute for Rando
 Optimized for RTX 3090 GPU.
 """
 
+import os
+# Set tokenizers parallelism explicitly to prevent warnings with DataLoader workers
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -16,32 +20,70 @@ from tqdm import tqdm
 
 
 class EmbeddingRegressorNet(nn.Module):
-    """Neural network for regression on embeddings, optimized for RTX 3090."""
+    """Enhanced neural network for regression on embeddings, with advanced architecture."""
 
-    def __init__(self, input_dim, output_dim, hidden_dims=[512, 256, 128]):
+    def __init__(self, input_dim, output_dim, hidden_dims=[768, 512, 256, 128]):
         super().__init__()
 
         self.layers = nn.ModuleList()
+        self.activation = nn.LeakyReLU(0.1)  # LeakyReLU for better gradient flow
+        self.input_dropout = nn.Dropout(0.2)  # Initial dropout to reduce overfitting
+        
+        # Batch normalization for input
+        self.input_bn = nn.BatchNorm1d(input_dim)
 
         # Input layer
         self.layers.append(nn.Linear(input_dim, hidden_dims[0]))
-        self.layers.append(nn.ReLU())
+        self.layers.append(self.activation)
         self.layers.append(nn.BatchNorm1d(hidden_dims[0]))
-        self.layers.append(nn.Dropout(0.3))
+        self.layers.append(nn.Dropout(0.4))  # Higher dropout for first layer
 
-        # Hidden layers
+        # Hidden layers with residual connections when possible
         for i in range(len(hidden_dims) - 1):
+            # Add main layer
             self.layers.append(nn.Linear(hidden_dims[i], hidden_dims[i + 1]))
-            self.layers.append(nn.ReLU())
+            self.layers.append(self.activation)
             self.layers.append(nn.BatchNorm1d(hidden_dims[i + 1]))
-            self.layers.append(nn.Dropout(0.2))
+            
+            # Gradually decrease dropout as we go deeper
+            dropout_rate = max(0.1, 0.4 - 0.05 * i)
+            self.layers.append(nn.Dropout(dropout_rate))
+        
+        # Final hidden layer with reduced dropout
+        self.pre_output = nn.Sequential(
+            nn.Linear(hidden_dims[-1], hidden_dims[-1]),
+            self.activation,
+            nn.BatchNorm1d(hidden_dims[-1]),
+            nn.Dropout(0.1)
+        )
 
         # Output layer
         self.out_layer = nn.Linear(hidden_dims[-1], output_dim)
+        
+        # Initialize weights for better training
+        self._init_weights()
+    
+    def _init_weights(self):
+        """Initialize weights using Kaiming initialization"""
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='leaky_relu')
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
 
     def forward(self, x):
+        # Apply input batch normalization and dropout
+        x = self.input_bn(x)
+        x = self.input_dropout(x)
+        
+        # Forward through main layers
         for layer in self.layers:
             x = layer(x)
+        
+        # Final pre-output block
+        x = self.pre_output(x)
+        
+        # Output layer
         return self.out_layer(x)
 
 
@@ -56,12 +98,52 @@ class TorchRegressorWrapper(BaseEstimator, RegressorMixin):
         self.device = device
 
     def predict(self, X):
-        # Convert to torch tensor if necessary
+        # Check if this is a large sparse matrix (memory-efficient handling)
+        is_sparse = hasattr(X, 'toarray')
+        is_large_sparse = is_sparse and X.shape[1] > 10000
+        
+        # For large sparse matrices, use batched prediction without full conversion
+        if is_large_sparse:
+            from scipy import sparse
+            if not sparse.isspmatrix_csr(X):
+                X = X.tocsr()  # Convert to CSR for efficient row slicing
+                
+            # Use smaller batch size for very large matrices
+            batch_size = 64 if X.shape[1] > 100000 else 128
+            outputs = []
+            n_samples = X.shape[0]
+            
+            # Set model to eval mode
+            self.model.eval()
+            
+            # Process in batches
+            for i in range(0, n_samples, batch_size):
+                end_idx = min(i + batch_size, n_samples)
+                batch_indices = list(range(i, end_idx))
+                
+                # Extract batch and convert to dense tensor
+                with torch.no_grad():
+                    batch_X = torch.tensor(X[batch_indices].toarray(), dtype=torch.float32).to(self.device)
+                    batch_pred = self.model(batch_X)
+                    outputs.append(batch_pred.cpu().numpy())
+                
+                # Clear memory periodically
+                if i % (batch_size * 10) == 0 and self.device == "cuda":
+                    torch.cuda.empty_cache()
+                    
+            # Combine all batches
+            return np.vstack(outputs)
+        
+        # For dense arrays or smaller sparse matrices, use standard approach
         if not isinstance(X, torch.Tensor):
-            X = torch.tensor(X, dtype=torch.float32).to(self.device)
+            # Handle sparse matrices
+            if is_sparse:
+                X = torch.tensor(X.toarray(), dtype=torch.float32).to(self.device)
+            else:
+                X = torch.tensor(X, dtype=torch.float32).to(self.device)
 
-        # For large datasets, predict in batches to avoid OOM errors
-        if X.shape[0] > 10000:
+        # For large (but not sparse) datasets, predict in batches to avoid OOM errors
+        if X.shape[0] > 1000:
             batch_size = 1024  # Larger batch size for RTX 3090
             outputs = []
             
@@ -92,19 +174,19 @@ class TorchRegressorWrapper(BaseEstimator, RegressorMixin):
 def train_torch_regressor(
     X_train,
     y_train,
-    epochs=150,               # Increased epochs for better convergence
-    batch_size=128,           # Larger batch size for RTX 3090
-    learning_rate=0.001,
+    epochs=300,               # Many epochs for thorough training
+    batch_size=128,           # Moderate batch size for better generalization
+    learning_rate=0.0008,     # Smaller learning rate for more stable training
     device=None,
-    hidden_dims=[512, 256, 128],  # Larger model for RTX 3090
-    patience=15,              # Increased patience
+    hidden_dims=[768, 512, 256, 128],  # Deeper network for better feature learning
+    patience=30,              # Higher patience to avoid early stopping
     verbose=True,
 ):
     """
     Train a PyTorch regression model on embeddings, optimized for RTX 3090 GPU.
 
     Args:
-        X_train: Training features (numpy array)
+        X_train: Training features (numpy array or sparse matrix)
         y_train: Training targets (numpy array)
         epochs: Number of training epochs
         batch_size: Batch size for training
@@ -144,154 +226,297 @@ def train_torch_regressor(
         print(f"Input data: X_train={X_train.shape}, y_train={y_train.shape}")
         print(f"Model architecture: hidden_dims={hidden_dims}")
 
-    # Convert data to PyTorch tensors
-    X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
-    y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
+    # Check if input is sparse matrix
+    is_sparse = hasattr(X_train, 'toarray')
+    
+    # Handle sparse matrices properly
+    if is_sparse:
+        print("Detected sparse matrix input. Using optimized sparse training.")
+        from scipy import sparse
+        if not sparse.isspmatrix_csr(X_train):
+            print("Converting to CSR format for efficient row slicing...")
+            X_train = X_train.tocsr()
+        
+        # Create validation split manually
+        n_samples = X_train.shape[0]
+        val_size = int(0.1 * n_samples)
+        train_size = n_samples - val_size
+        
+        # Create indices with permutation
+        all_indices = np.random.permutation(n_samples)
+        train_indices = all_indices[:train_size]
+        val_indices = all_indices[train_size:]
+        
+        # Prepare target tensor
+        y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
+        
+        # Function to extract batch from sparse matrix
+        def get_batch(indices, sparse_matrix, target_tensor):
+            X_batch = torch.tensor(sparse_matrix[indices].toarray(), dtype=torch.float32).to(device)
+            y_batch = target_tensor[indices].to(device)
+            return X_batch, y_batch
+    else:
+        # Dense input - use TensorDataset
+        print("Using standard tensor-based training approach.")
+        X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
+        y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
+        
+        # Create dataset and dataloader
+        full_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+        
+        # Split into train/val
+        val_size = int(0.1 * len(full_dataset))
+        train_size = len(full_dataset) - val_size
+        train_dataset, val_dataset = torch.utils.data.random_split(
+            full_dataset, [train_size, val_size], 
+            generator=torch.Generator().manual_seed(42)
+        )
+        
+        # Define worker initialization function for DataLoader
+        def worker_init_fn(worker_id):
+            # Each worker should have different but deterministic random seed
+            torch.manual_seed(42 + worker_id)
+            np.random.seed(42 + worker_id)
+            # Ensure tokenizers parallelism is properly set in subprocesses
+            if "TOKENIZERS_PARALLELISM" not in os.environ:
+                os.environ["TOKENIZERS_PARALLELISM"] = "false"
+        
+        # Create dataloaders with worker initialization
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            pin_memory=(device == "cuda"),
+            num_workers=4 if device == "cuda" else 0,
+            worker_init_fn=worker_init_fn,
+            persistent_workers=True if device == "cuda" and torch.cuda.is_available() else False,
+        )
+        
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            pin_memory=(device == "cuda"),
+            num_workers=4 if device == "cuda" else 0,
+            worker_init_fn=worker_init_fn,
+            persistent_workers=True if device == "cuda" and torch.cuda.is_available() else False,
+        )
 
-    # Create dataset and dataloader with appropriate workers for RTX 3090
-    num_workers = 4 if device == "cuda" else 0  # Use multiple workers on GPU
-    train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        pin_memory=(device == "cuda"),
-        num_workers=num_workers,
-    )
-
-    # Create validation set (10% of training data)
-    val_size = int(0.1 * len(X_train))
-    train_size = len(X_train) - val_size
-
-    # Split indices
-    indices = torch.randperm(len(X_train))
-    train_indices = indices[:train_size]
-    val_indices = indices[train_size:]
-
-    # Create validation dataset and loader
-    val_dataset = TensorDataset(
-        X_train_tensor[val_indices], y_train_tensor[val_indices]
-    )
-    val_loader = DataLoader(
-        val_dataset, 
-        batch_size=batch_size, 
-        shuffle=False, 
-        pin_memory=(device == "cuda"),
-        num_workers=num_workers
-    )
-
-    # Create model
+    # Create model with input dim from data
     input_dim = X_train.shape[1]
     output_dim = y_train.shape[1] if len(y_train.shape) > 1 else 1
-
-    model = EmbeddingRegressorNet(
-        input_dim=input_dim, output_dim=output_dim, hidden_dims=hidden_dims
-    ).to(device)
-
-    # Define loss function and optimizer
-    criterion = nn.MSELoss()
-    optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
     
-    # Use OneCycleLR scheduler for improved convergence
-    scheduler = optim.lr_scheduler.OneCycleLR(
+    # Initialize model
+    model = EmbeddingRegressorNet(
+        input_dim=input_dim, 
+        output_dim=output_dim, 
+        hidden_dims=hidden_dims
+    ).to(device)
+    
+    # Define loss functions
+    mse_criterion = nn.MSELoss()
+    l1_criterion = nn.L1Loss()
+    
+    # Combined loss function for robustness
+    def combined_loss(pred, target, alpha=0.8):
+        """Combined MSE and L1 loss for robust regression"""
+        mse = mse_criterion(pred, target)
+        l1 = l1_criterion(pred, target)
+        return alpha * mse + (1-alpha) * l1
+    
+    # Use AdamW optimizer with weight decay
+    optimizer = optim.AdamW(
+        model.parameters(), 
+        lr=learning_rate,
+        weight_decay=1e-4,
+        betas=(0.9, 0.999),
+        eps=1e-8
+    )
+    
+    # Learning rate scheduler with plateau detection
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
-        max_lr=learning_rate * 10,
-        epochs=epochs,
-        steps_per_epoch=len(train_loader),
-        pct_start=0.3,
-        div_factor=25,
-        final_div_factor=10000,
+        mode='min',
+        factor=0.5,      # Halve the learning rate when plateauing
+        patience=10,     # Wait 10 epochs before reducing LR
+        verbose=verbose,
+        threshold=0.001,
+        min_lr=learning_rate/100  # Don't go below this LR
     )
 
-    # Enable automatic mixed precision for faster training on RTX 3090
+    # Enable mixed precision for faster training
     scaler = torch.cuda.amp.GradScaler() if device == "cuda" else None
     
     # Training loop
     best_val_loss = float("inf")
     patience_counter = 0
     best_model_state = None
-
-    # Progress bar for training
+    
+    # Progress bar for epochs
     progress_bar = tqdm(range(epochs), desc="Training") if verbose else range(epochs)
+    
+    # Batch generator for sparse matrices
+    def batch_generator(indices, batch_size):
+        np.random.shuffle(indices)
+        for i in range(0, len(indices), batch_size):
+            yield indices[i:i+batch_size]
     
     for epoch in progress_bar:
         # Training phase
         model.train()
         train_loss = 0.0
         train_batches = 0
-
-        for batch_X, batch_y in train_loader:
-            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-
-            # Use mixed precision training if available
-            if scaler is not None:
-                with torch.cuda.amp.autocast():
-                    # Forward pass
-                    outputs = model(batch_X)
+        
+        # Handle sparse vs dense training differently
+        if is_sparse:
+            # Sparse matrix training
+            for batch_indices in batch_generator(train_indices, batch_size):
+                # Get batch data
+                X_batch, y_batch = get_batch(batch_indices, X_train, y_train_tensor)
+                
+                # Mixed precision training if available
+                if scaler is not None:
+                    with torch.cuda.amp.autocast():
+                        outputs = model(X_batch)
+                        if output_dim == 1:
+                            outputs = outputs.squeeze()
+                        loss = combined_loss(outputs, y_batch)
+                    
+                    # Gradient optimization with scaling
+                    optimizer.zero_grad(set_to_none=True)  # More efficient zeroing
+                    scaler.scale(loss).backward()
+                    
+                    # Gradient clipping for stability
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    # Standard training
+                    outputs = model(X_batch)
                     if output_dim == 1:
                         outputs = outputs.squeeze()
-                    loss = criterion(outputs, batch_y)
+                    loss = combined_loss(outputs, y_batch)
+                    
+                    optimizer.zero_grad(set_to_none=True)
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    optimizer.step()
                 
-                # Backward and optimize with scaled gradients
-                optimizer.zero_grad()
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                # Standard training
-                # Forward pass
-                outputs = model(batch_X)
-                if output_dim == 1:
-                    outputs = outputs.squeeze()
-                loss = criterion(outputs, batch_y)
+                train_loss += loss.item()
+                train_batches += 1
                 
-                # Backward and optimize
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-            
-            # Update learning rate
-            scheduler.step()
-            
-            train_loss += loss.item()
-            train_batches += 1
-
-        train_loss /= train_batches
-
+                # Clear GPU memory periodically
+                if train_batches % 10 == 0 and device == "cuda":
+                    torch.cuda.empty_cache()
+        else:
+            # Dense tensor training
+            for X_batch, y_batch in train_loader:
+                X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+                
+                # Mixed precision training if available
+                if scaler is not None:
+                    with torch.cuda.amp.autocast():
+                        outputs = model(X_batch)
+                        if output_dim == 1:
+                            outputs = outputs.squeeze()
+                        loss = combined_loss(outputs, y_batch)
+                    
+                    # Gradient optimization with scaling
+                    optimizer.zero_grad(set_to_none=True)
+                    scaler.scale(loss).backward()
+                    
+                    # Gradient clipping for stability
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    # Standard training
+                    outputs = model(X_batch)
+                    if output_dim == 1:
+                        outputs = outputs.squeeze()
+                    loss = combined_loss(outputs, y_batch)
+                    
+                    optimizer.zero_grad(set_to_none=True)
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    optimizer.step()
+                
+                train_loss += loss.item()
+                train_batches += 1
+        
+        # Calculate average training loss
+        train_loss /= train_batches if train_batches > 0 else 1
+        
         # Validation phase
         model.eval()
         val_loss = 0.0
         val_batches = 0
-
+        
         with torch.no_grad():
-            for batch_X, batch_y in val_loader:
-                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-
-                # Use mixed precision if available
-                if scaler is not None:
-                    with torch.cuda.amp.autocast():
-                        outputs = model(batch_X)
+            # Handle sparse vs dense validation differently
+            if is_sparse:
+                # Sparse matrix validation
+                for batch_indices in batch_generator(val_indices, batch_size):
+                    # Get batch data
+                    X_batch, y_batch = get_batch(batch_indices, X_train, y_train_tensor)
+                    
+                    # Use mixed precision for validation too
+                    if scaler is not None:
+                        with torch.cuda.amp.autocast():
+                            outputs = model(X_batch)
+                            if output_dim == 1:
+                                outputs = outputs.squeeze()
+                            loss = combined_loss(outputs, y_batch)
+                    else:
+                        outputs = model(X_batch)
                         if output_dim == 1:
                             outputs = outputs.squeeze()
-                        loss = criterion(outputs, batch_y)
-                else:
-                    outputs = model(batch_X)
-                    if output_dim == 1:
-                        outputs = outputs.squeeze()
-                    loss = criterion(outputs, batch_y)
-                
-                val_loss += loss.item()
-                val_batches += 1
-
-        val_loss /= val_batches
-
+                        loss = combined_loss(outputs, y_batch)
+                    
+                    val_loss += loss.item()
+                    val_batches += 1
+            else:
+                # Dense tensor validation
+                for X_batch, y_batch in val_loader:
+                    X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+                    
+                    # Use mixed precision for validation too
+                    if scaler is not None:
+                        with torch.cuda.amp.autocast():
+                            outputs = model(X_batch)
+                            if output_dim == 1:
+                                outputs = outputs.squeeze()
+                            loss = combined_loss(outputs, y_batch)
+                    else:
+                        outputs = model(X_batch)
+                        if output_dim == 1:
+                            outputs = outputs.squeeze()
+                        loss = combined_loss(outputs, y_batch)
+                    
+                    val_loss += loss.item()
+                    val_batches += 1
+        
+        # Calculate average validation loss
+        val_loss /= val_batches if val_batches > 0 else 1
+        
+        # Update learning rate based on validation loss
+        scheduler.step(val_loss)
+        
+        # Get current learning rate
+        current_lr = optimizer.param_groups[0]['lr']
+        
         # Update progress bar
         if verbose:
             progress_bar.set_postfix({
                 'train_loss': f'{train_loss:.4f}',
-                'val_loss': f'{val_loss:.4f}'
+                'val_loss': f'{val_loss:.4f}',
+                'lr': f'{current_lr:.6f}'
             })
-
+        
         # Early stopping check
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -299,24 +524,25 @@ def train_torch_regressor(
             best_model_state = model.state_dict().copy()
         else:
             patience_counter += 1
-
+        
         if patience_counter >= patience:
             if verbose:
                 print(f"Early stopping at epoch {epoch+1}")
             break
-
-    # Load best model
+    
+    # Load best model state
     if best_model_state is not None:
         model.load_state_dict(best_model_state)
-
+    
+    # Report training time
     elapsed_time = time.time() - start_time
     if verbose:
         print(f"PyTorch model training completed in {elapsed_time:.2f} seconds")
         print(f"Best validation loss: {best_val_loss:.6f}")
-
+    
     # Create sklearn-compatible wrapper
     wrapped_model = TorchRegressorWrapper(model, device)
-
+    
     # Save the model
     model_filename = "torch_regressor_model.pt"
     torch.save({
@@ -329,6 +555,6 @@ def train_torch_regressor(
     
     if verbose:
         print(f"Saved PyTorch model to {model_filename}")
-
+    
     # Return the wrapped model
     return wrapped_model

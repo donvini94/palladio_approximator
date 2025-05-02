@@ -1,3 +1,7 @@
+import os
+# Set tokenizers parallelism explicitly to prevent warnings with multiprocessing
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 import argparse
 from dataset import load_dataset
 from feature_extraction import (
@@ -14,7 +18,6 @@ import torch
 import numpy as np
 import time
 import sys
-import os
 import warnings
 
 
@@ -77,10 +80,30 @@ def main(args):
             # Feature extraction
             print(f"Building features using {args.embedding} embedding...")
             if args.embedding == "tfidf":
-                X_train, y_train, X_val, y_val, X_test, y_test, vectorizer = (
-                    build_tfidf_features(train_samples, val_samples, test_samples)
+                # For torch, we want to use full feature set with moderate dimensionality reduction
+                if args.model == "torch":
+                    # No limit on max features to capture all important terms
+                    max_features = None
+                    # Keep more components for better representation quality
+                    n_components = 2000
+                    # Only apply SVD if it maintains high explained variance
+                    apply_truncated_svd = True
+                    print(f"Using high-quality parameters for torch: max_features={max_features}, n_components={n_components}")
+                else:
+                    max_features = 10000
+                    n_components = 1000
+                    apply_truncated_svd = True
+                
+                X_train, y_train, X_val, y_val, X_test, y_test, embedding_model = (
+                    build_tfidf_features(
+                        train_samples, 
+                        val_samples, 
+                        test_samples, 
+                        max_features=max_features, 
+                        apply_truncated_svd=apply_truncated_svd, 
+                        n_components=n_components
+                    )
                 )
-                embedding_model = vectorizer
             elif args.embedding == "bert":
                 device = (
                     "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
@@ -126,19 +149,6 @@ def main(args):
             if embedding_model is not None:
                 print(f"Saving embedding model to {embedding_model_path}...")
                 joblib.dump(embedding_model, embedding_model_path)
-
-    # Check for NaN values before training
-    print("Checking for NaN values in features...")
-    if np.isnan(X_train).any() or np.isnan(y_train).any():
-        print("WARNING: NaN values detected, replacing with zeros")
-        X_train = np.nan_to_num(X_train)
-        y_train = np.nan_to_num(y_train)
-        X_val = np.nan_to_num(X_val)
-        y_val = np.nan_to_num(y_val)
-        X_test = np.nan_to_num(X_test)
-        y_test = np.nan_to_num(y_test)
-    else:
-        print("No NaN values found, proceeding with training")
 
     if args.use_mlflow:
         import mlflow
