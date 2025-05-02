@@ -36,7 +36,7 @@
         ];
 
         shellHook = ''
-          export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+          export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
           echo "Torch CUDA available: $(python -c 'import torch; print(torch.cuda.is_available())')"
 
           # Create uv environment in .venv if it doesn't exist

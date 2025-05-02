@@ -9,3 +9,4 @@ seaborn
 tiktoken
 matplotlib
 torch
+accelerate

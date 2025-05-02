@@ -7,6 +7,7 @@ from dataset import load_dataset
 from feature_extraction import (
     build_tfidf_features,
     build_bert_features,
+    build_llama_features,
 )
 from models.rf_model import train_random_forest
 from models.linear_model import train_linear_model
@@ -112,6 +113,33 @@ def main(args):
                 X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model = (
                     build_bert_features(
                         train_samples, val_samples, test_samples, device=device
+                    )
+                )
+                embedding_model = (tokenizer, model)
+            elif args.embedding == "llama":
+                device = (
+                    "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
+                )
+                if device != "cuda":
+                    print("WARNING: Llama models require CUDA. Forcing CUDA if available.")
+                    device = "cuda" if torch.cuda.is_available() else "cpu"
+                
+                print(f"Using device: {device}")
+                
+                # Get model name based on size parameter
+                model_name = args.llama_model if args.llama_model else "codellama/CodeLlama-7b-hf"
+                X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model = (
+                    build_llama_features(
+                        train_samples,
+                        val_samples,
+                        test_samples,
+                        model_name=model_name,
+                        device=device,
+                        batch_size=args.llama_batch_size,
+                        use_half_precision=not args.no_half_precision,
+                        use_8bit=args.use_8bit_llama,
+                        use_4bit=args.use_4bit_llama,
+                        memory_efficient=True
                     )
                 )
                 embedding_model = (tokenizer, model)
@@ -238,8 +266,37 @@ if __name__ == "__main__":
     parser.add_argument(
         "--embedding",
         type=str,
-        choices=["tfidf", "bert"],
+        choices=["tfidf", "bert", "llama"],
         default="bert",
+        help="Embedding model type to use (tfidf, bert, or llama)"
+    )
+    # LLaMA model options
+    parser.add_argument(
+        "--llama_model",
+        type=str,
+        default="codellama/CodeLlama-7b-hf",
+        help="LLaMA model to use (only for --embedding=llama)"
+    )
+    parser.add_argument(
+        "--llama_batch_size",
+        type=int,
+        default=4,
+        help="Batch size for LLaMA processing (smaller values use less memory)"
+    )
+    parser.add_argument(
+        "--no_half_precision",
+        action="store_true",
+        help="Disable half precision (FP16) for LLaMA models, uses more memory but may be more accurate"
+    )
+    parser.add_argument(
+        "--use_8bit_llama",
+        action="store_true",
+        help="Use 8-bit quantization for LLaMA models (reduces memory usage by ~50%)"
+    )
+    parser.add_argument(
+        "--use_4bit_llama",
+        action="store_true",
+        help="Use 4-bit quantization for LLaMA models (reduces memory usage by ~75%, recommended for 7B+ models)"
     )
     parser.add_argument(
         "--prediction_mode",
