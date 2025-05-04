@@ -10,3 +10,4 @@ tiktoken
 matplotlib
 torch
 accelerate
+shap
