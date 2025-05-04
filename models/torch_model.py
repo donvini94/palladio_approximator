@@ -197,7 +197,8 @@ def train_torch_regressor(
         verbose: Whether to print progress
 
     Returns:
-        Trained model wrapped in a scikit-learn compatible wrapper
+        Trained model wrapped in a scikit-learn compatible wrapper, with
+        training metrics (train_loss, val_loss, etc.) stored as attributes
     """
     # Determine device
     if device is None:
@@ -343,6 +344,23 @@ def train_torch_regressor(
         threshold=0.001,
         min_lr=learning_rate/100  # Don't go below this LR
     )
+    
+    # Initialize metric history tracking
+    metrics_history = {
+        "train_loss": [],
+        "val_loss": [],
+        "val_mse": [],
+        "val_mae": [],
+        "learning_rate": []
+    }
+    
+    # Initialize best metrics tracking
+    best_metrics = {
+        "val_loss": float('inf'),
+        "val_mse": float('inf'),
+        "val_mae": float('inf'),
+        "epoch": 0
+    }
 
     # Enable mixed precision for faster training
     scaler = torch.cuda.amp.GradScaler() if device == "cuda" else None
@@ -517,11 +535,52 @@ def train_torch_regressor(
                 'lr': f'{current_lr:.6f}'
             })
         
+        # Calculate additional metrics
+        model.eval()
+        with torch.no_grad():
+            # Calculate MSE on validation set
+            val_mse = 0.0
+            val_mae = 0.0
+            # Calculate metrics on a validation subset to save time
+            if is_sparse:
+                # Use a subset of val_indices to save time
+                subset_size = min(1000, len(val_indices))
+                subset_indices = val_indices[:subset_size]
+                X_val_subset, y_val_subset = get_batch(subset_indices, X_train, y_train_tensor)
+                outputs = model(X_val_subset)
+                if output_dim == 1:
+                    outputs = outputs.squeeze()
+                val_mse = mse_criterion(outputs, y_val_subset).item()
+                val_mae = l1_criterion(outputs, y_val_subset).item()
+            else:
+                # Try to use a full validation batch
+                for X_batch, y_batch in [next(iter(val_loader))]:
+                    X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+                    outputs = model(X_batch)
+                    if output_dim == 1:
+                        outputs = outputs.squeeze()
+                    val_mse = mse_criterion(outputs, y_batch).item()
+                    val_mae = l1_criterion(outputs, y_batch).item()
+                    break  # Just use one batch
+        
+        # Store metrics for history
+        metrics_history["train_loss"].append(train_loss)
+        metrics_history["val_loss"].append(val_loss)
+        metrics_history["val_mse"].append(val_mse)
+        metrics_history["val_mae"].append(val_mae)
+        metrics_history["learning_rate"].append(current_lr)
+        
         # Early stopping check
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             patience_counter = 0
             best_model_state = model.state_dict().copy()
+            best_epoch = epoch + 1
+            # Update best metrics
+            best_metrics["val_loss"] = best_val_loss
+            best_metrics["val_mse"] = val_mse
+            best_metrics["val_mae"] = val_mae
+            best_metrics["epoch"] = epoch + 1
         else:
             patience_counter += 1
         
@@ -552,6 +611,24 @@ def train_torch_regressor(
         'output_dim': output_dim,
         'best_val_loss': best_val_loss,
     }, model_filename)
+    
+    # Add training metadata to the wrapped model
+    wrapped_model.training_metrics = {
+        "history": metrics_history,
+        "best_metrics": best_metrics,
+        "training_time_seconds": elapsed_time,
+        "final_val_loss": best_val_loss,
+        "total_epochs": epoch + 1,
+        "input_dim": input_dim,
+        "output_dim": output_dim,
+        "hidden_dims": hidden_dims,
+        "learning_rate": learning_rate,
+        "batch_size": batch_size,
+        "optimizer": "AdamW",
+        "early_stopping": patience,
+        # Store pytorch model for access later
+        "pytorch_model": model
+    }
     
     if verbose:
         print(f"Saved PyTorch model to {model_filename}")

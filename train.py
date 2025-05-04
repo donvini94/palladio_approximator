@@ -1,4 +1,5 @@
 import os
+
 # Set tokenizers parallelism explicitly to prevent warnings with multiprocessing
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -27,8 +28,12 @@ def main(args):
     print(f"=== Starting execution at {time.strftime('%H:%M:%S')} ===")
 
     # Determine checkpoint path
-    checkpoint_path = f"{args.embedding}_{args.prediction_mode}_features_checkpoint.pkl"
-    embedding_model_path = f"{args.embedding}_{args.prediction_mode}_embedding.pkl"
+    checkpoint_path = (
+        f"features/{args.embedding}_{args.prediction_mode}_features_checkpoint.pkl"
+    )
+    embedding_model_path = (
+        f"embeddings/{args.embedding}_{args.prediction_mode}_embedding.pkl"
+    )
 
     # Initialize variables to avoid UnboundLocalError
     embedding_model = None
@@ -89,20 +94,22 @@ def main(args):
                     n_components = 2000
                     # Only apply SVD if it maintains high explained variance
                     apply_truncated_svd = True
-                    print(f"Using high-quality parameters for torch: max_features={max_features}, n_components={n_components}")
+                    print(
+                        f"Using high-quality parameters for torch: max_features={max_features}, n_components={n_components}"
+                    )
                 else:
                     max_features = 10000
                     n_components = 1000
                     apply_truncated_svd = True
-                
+
                 X_train, y_train, X_val, y_val, X_test, y_test, embedding_model = (
                     build_tfidf_features(
-                        train_samples, 
-                        val_samples, 
-                        test_samples, 
-                        max_features=max_features, 
-                        apply_truncated_svd=apply_truncated_svd, 
-                        n_components=n_components
+                        train_samples,
+                        val_samples,
+                        test_samples,
+                        max_features=max_features,
+                        apply_truncated_svd=apply_truncated_svd,
+                        n_components=n_components,
                     )
                 )
             elif args.embedding == "bert":
@@ -121,13 +128,19 @@ def main(args):
                     "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
                 )
                 if device != "cuda":
-                    print("WARNING: Llama models require CUDA. Forcing CUDA if available.")
+                    print(
+                        "WARNING: Llama models require CUDA. Forcing CUDA if available."
+                    )
                     device = "cuda" if torch.cuda.is_available() else "cpu"
-                
+
                 print(f"Using device: {device}")
-                
+
                 # Get model name based on size parameter
-                model_name = args.llama_model if args.llama_model else "codellama/CodeLlama-7b-hf"
+                model_name = (
+                    args.llama_model
+                    if args.llama_model
+                    else "codellama/CodeLlama-7b-hf"
+                )
                 X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model = (
                     build_llama_features(
                         train_samples,
@@ -139,7 +152,7 @@ def main(args):
                         use_half_precision=not args.no_half_precision,
                         use_8bit=args.use_8bit_llama,
                         use_4bit=args.use_4bit_llama,
-                        memory_efficient=True
+                        memory_efficient=True,
                     )
                 )
                 embedding_model = (tokenizer, model)
@@ -184,15 +197,41 @@ def main(args):
         print("Setting up MLflow...")
         mlflow.set_experiment("dsl-performance-prediction")
         mlflow.start_run()
-        mlflow.log_params(
-            {
-                "model_type": args.model,
-                "embedding": args.embedding,
-                "prediction_mode": args.prediction_mode,
-                "n_estimators": args.n_estimators,
-                "alpha": args.alpha,
-            }
-        )
+
+        # Log common parameters for all models
+        params = {
+            "model": args.model,
+            "embedding": args.embedding,
+            "prediction_mode": args.prediction_mode,
+            "n_estimators": args.n_estimators,
+            "alpha": args.alpha,
+        }
+
+        # Add model-specific parameters to make filtering easier
+        if args.model == "torch":
+            params.update(
+                {
+                    "model_type": "torch",  # For compatibility with visualize_training_metrics
+                    "epochs": args.epochs,
+                    "batch_size": args.batch_size,
+                }
+            )
+        elif args.model == "rf":
+            params.update(
+                {
+                    "model_type": "rf",
+                    "n_estimators": args.n_estimators,
+                }
+            )
+        elif args.model in ("ridge", "lasso"):
+            params.update(
+                {
+                    "model_type": args.model,
+                    "alpha": args.alpha,
+                }
+            )
+
+        mlflow.log_params(params)
 
     print(f"=== Starting model training at {time.strftime('%H:%M:%S')} ===")
     print(
@@ -214,6 +253,71 @@ def main(args):
             epochs=args.epochs,
             batch_size=args.batch_size,
         )
+
+        # Log detailed training metrics from PyTorch model to MLflow
+        if args.use_mlflow and hasattr(model, "training_metrics"):
+            # Log additional parameters (not already logged)
+            # Avoid re-logging 'model_type' which causes the conflict
+            additional_params = {
+                "input_dim": model.training_metrics["input_dim"],
+                "output_dim": model.training_metrics["output_dim"],
+                "hidden_dims": str(model.training_metrics["hidden_dims"]),
+                "learning_rate": model.training_metrics["learning_rate"],
+                "optimizer": model.training_metrics["optimizer"],
+                "early_stopping": model.training_metrics["early_stopping"],
+                # Not logging batch_size or model_type again as they're already logged above
+            }
+            mlflow.log_params(additional_params)
+
+            # Log per-epoch metrics
+            history = model.training_metrics["history"]
+            for epoch in range(len(history["train_loss"])):
+                mlflow.log_metrics(
+                    {
+                        "epoch": epoch + 1,
+                        "train_loss": history["train_loss"][epoch],
+                        "val_loss": history["val_loss"][epoch],
+                        "val_mse": history["val_mse"][epoch],
+                        "val_mae": history["val_mae"][epoch],
+                        "learning_rate": history["learning_rate"][epoch],
+                    },
+                    step=epoch,
+                )
+
+            # Log best metrics with explicit best_ prefix to avoid conflicts
+            best_metrics = {
+                f"best_{k}": v
+                for k, v in model.training_metrics["best_metrics"].items()
+            }
+            mlflow.log_metrics(best_metrics)
+
+            # Log final metrics
+            mlflow.log_metrics(
+                {
+                    "training_time_seconds": model.training_metrics[
+                        "training_time_seconds"
+                    ],
+                    "final_val_loss": model.training_metrics["final_val_loss"],
+                    "total_epochs": model.training_metrics["total_epochs"],
+                }
+            )
+
+            # Log the PyTorch model file
+            try:
+                model_path = f"{args.model}_{args.prediction_mode}_model.pkl"
+                mlflow.log_artifact(model_path)
+
+                # Try to log PyTorch model directly if it's available
+                if "pytorch_model" in model.training_metrics:
+                    try:
+                        import mlflow.pytorch
+
+                        pytorch_model = model.training_metrics["pytorch_model"]
+                        mlflow.pytorch.log_model(pytorch_model, "pytorch_model")
+                    except Exception as e:
+                        print(f"Warning: Could not log PyTorch model directly: {e}")
+            except Exception as e:
+                print(f"Warning: Could not log model file: {e}")
 
     elif args.model in ("ridge", "lasso"):
         print("Training linear model...")
@@ -268,35 +372,35 @@ if __name__ == "__main__":
         type=str,
         choices=["tfidf", "bert", "llama"],
         default="bert",
-        help="Embedding model type to use (tfidf, bert, or llama)"
+        help="Embedding model type to use (tfidf, bert, or llama)",
     )
     # LLaMA model options
     parser.add_argument(
         "--llama_model",
         type=str,
         default="codellama/CodeLlama-7b-hf",
-        help="LLaMA model to use (only for --embedding=llama)"
+        help="LLaMA model to use (only for --embedding=llama)",
     )
     parser.add_argument(
         "--llama_batch_size",
         type=int,
         default=4,
-        help="Batch size for LLaMA processing (smaller values use less memory)"
+        help="Batch size for LLaMA processing (smaller values use less memory)",
     )
     parser.add_argument(
         "--no_half_precision",
         action="store_true",
-        help="Disable half precision (FP16) for LLaMA models, uses more memory but may be more accurate"
+        help="Disable half precision (FP16) for LLaMA models, uses more memory but may be more accurate",
     )
     parser.add_argument(
         "--use_8bit_llama",
         action="store_true",
-        help="Use 8-bit quantization for LLaMA models (reduces memory usage by ~50%)"
+        help="Use 8-bit quantization for LLaMA models (reduces memory usage by ~50%)",
     )
     parser.add_argument(
         "--use_4bit_llama",
         action="store_true",
-        help="Use 4-bit quantization for LLaMA models (reduces memory usage by ~75%, recommended for 7B+ models)"
+        help="Use 4-bit quantization for LLaMA models (reduces memory usage by ~75%, recommended for 7B+ models)",
     )
     parser.add_argument(
         "--prediction_mode",
