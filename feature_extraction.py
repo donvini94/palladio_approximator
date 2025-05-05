@@ -331,7 +331,7 @@ def build_llama_features(
 
     # For long inputs, we need specific handling strategies
     sliding_window_overlap = 100  # More overlap for better context preservation
-    max_chunks_per_doc = 10  # Limit chunks due to computational cost of large models
+    max_chunks_per_doc = 15  # Increased from 10 to handle very long documents better
 
     # Create a function to encode DSL files with a Llama model
     def encode_with_llama(df):
@@ -382,6 +382,9 @@ def build_llama_features(
 
             # Process each text in batch
             for text in batch_texts:
+                # Initialize chunks to an empty list at the beginning
+                chunks = []
+
                 # Handle empty text
                 if not text or len(text.strip()) == 0:
                     # Create embedding for empty text
@@ -406,101 +409,115 @@ def build_llama_features(
                     batch_embeddings.append(normalized_emb)
                     continue
 
-                # Tokenize the text to get token IDs
-                tokenized_text = tokenizer.encode(
-                    text,
-                    add_special_tokens=False,
-                    truncation=False,
-                    return_tensors=None,
-                )
+                try:
+                    # Tokenize the text to get token IDs
+                    tokenized_text = tokenizer.encode(
+                        text,
+                        add_special_tokens=False,
+                        truncation=False,
+                        return_tensors=None,
+                    )
 
-                token_count = len(tokenized_text)
+                    token_count = len(tokenized_text)
 
-                if token_count > max_length:
-                    # For long documents, use a chunking approach appropriate for Llama models
-                    # LLaMA models can handle longer contexts, but we still need chunking for very long inputs
+                    if token_count > max_length:
+                        # For long documents, use a chunking approach appropriate for Llama models
+                        # LLaMA models can handle longer contexts, but we still need chunking for very long inputs
 
-                    # Find natural break points (focusing on code structure)
-                    natural_breaks = []
-                    for pattern in [
-                        r"\n\s*def\s+",
-                        r"\n\s*class\s+",
-                        r"\n\s*if\s+__name__",
-                        r"\n\s*#",
-                    ]:
-                        for match in re.finditer(pattern, text):
-                            natural_breaks.append((match.start(), "code_structure"))
+                        # Find natural break points (focusing on code structure)
+                        natural_breaks = []
+                        for pattern in [
+                            r"\n\s*def\s+",
+                            r"\n\s*class\s+",
+                            r"\n\s*if\s+__name__",
+                            r"\n\s*#",
+                        ]:
+                            for match in re.finditer(pattern, text):
+                                natural_breaks.append((match.start(), "code_structure"))
 
-                    # Also add simple newline blocks as potential break points
-                    for match in re.finditer(r"\n\n+", text):
-                        natural_breaks.append((match.start(), "newline"))
+                        # Also add simple newline blocks as potential break points
+                        for match in re.finditer(r"\n\n+", text):
+                            natural_breaks.append((match.start(), "newline"))
 
-                    # Sort breaks by position
-                    natural_breaks.sort(key=lambda x: x[0])
+                        # Sort breaks by position
+                        natural_breaks.sort(key=lambda x: x[0])
 
-                    # Handle chunking
-                    if not natural_breaks:
-                        # No natural breaks - use token-based chunking
-                        # For LLaMA, we can use longer chunks
-                        effective_length = max_length - sliding_window_overlap
+                        # Handle chunking
+                        if not natural_breaks:
+                            # No natural breaks - use token-based chunking
+                            # For LLaMA, we can use longer chunks
+                            effective_length = max_length - sliding_window_overlap
 
-                        chunks = []
-                        for i in range(0, token_count, effective_length):
-                            # Get token IDs for this chunk with overlap
-                            end_idx = min(i + max_length, token_count)
-                            chunk_tokens = tokenized_text[i:end_idx]
-                            chunk_text = tokenizer.decode(chunk_tokens)
-                            chunks.append(chunk_text)
-                    else:
-                        # Use natural breaks
-                        chunks = []
-                        start_pos = 0
+                            chunks = []
+                            for j in range(0, token_count, effective_length):
+                                # Get token IDs for this chunk with overlap
+                                end_idx = min(j + max_length, token_count)
+                                chunk_tokens = tokenized_text[j:end_idx]
+                                chunk_text = tokenizer.decode(chunk_tokens)
+                                chunks.append(chunk_text)
+                        else:
+                            # Use natural breaks
+                            chunks = []
+                            start_pos = 0
 
-                        # Estimate character length per token
-                        char_ratio = len(text) / token_count
-                        target_char_length = int(
-                            max_length * char_ratio * 0.9
-                        )  # 90% to be safe
+                            # Estimate character length per token
+                            char_ratio = len(text) / token_count
+                            target_char_length = int(
+                                max_length * char_ratio * 0.9
+                            )  # 90% to be safe
 
-                        while start_pos < len(text):
-                            target_pos = start_pos + target_char_length
-                            if target_pos >= len(text):
-                                chunks.append(text[start_pos:])
-                                break
-
-                            # Find break points near our target position
-                            valid_breaks = [
-                                b
-                                for b in natural_breaks
-                                if b[0] > start_pos and b[0] <= target_pos + 1000
-                            ]
-
-                            if valid_breaks:
-                                # Prioritize code structure breaks over simple newlines
-                                code_breaks = [
-                                    b for b in valid_breaks if b[1] == "code_structure"
-                                ]
-                                if code_breaks:
-                                    break_pos = code_breaks[-1][0]
-                                else:
-                                    break_pos = valid_breaks[-1][0]
-
-                                chunks.append(text[start_pos : break_pos + 1])
-                                start_pos = break_pos + 1
-                            else:
-                                # No good break found
-                                safe_pos = min(target_pos, len(text) - 1)
-                                chunks.append(text[start_pos:safe_pos])
-                                start_pos = safe_pos
-
-                            # Safety check
-                            if len(chunks) >= max_chunks_per_doc:
-                                if start_pos < len(text):
+                            while start_pos < len(text):
+                                target_pos = start_pos + target_char_length
+                                if target_pos >= len(text):
                                     chunks.append(text[start_pos:])
-                                break
+                                    break
+
+                                # Find break points near our target position
+                                valid_breaks = [
+                                    b
+                                    for b in natural_breaks
+                                    if b[0] > start_pos and b[0] <= target_pos + 1000
+                                ]
+
+                                if valid_breaks:
+                                    # Prioritize code structure breaks over simple newlines
+                                    code_breaks = [
+                                        b
+                                        for b in valid_breaks
+                                        if b[1] == "code_structure"
+                                    ]
+                                    if code_breaks:
+                                        break_pos = code_breaks[-1][0]
+                                    else:
+                                        break_pos = valid_breaks[-1][0]
+
+                                    chunks.append(text[start_pos : break_pos + 1])
+                                    start_pos = break_pos + 1
+                                else:
+                                    # No good break found
+                                    safe_pos = min(target_pos, len(text) - 1)
+                                    chunks.append(text[start_pos:safe_pos])
+                                    start_pos = safe_pos
+
+                                # Safety check
+                                if len(chunks) >= max_chunks_per_doc:
+                                    if start_pos < len(text):
+                                        chunks.append(text[start_pos:])
+                                    break
+                    else:
+                        # Text fits within model's context window
+                        chunks = [text]
+
+                    # Safety check - ensure chunks is not empty
+                    if not chunks:
+                        print(
+                            "Warning: Chunks list is empty, using whole text as single chunk"
+                        )
+                        chunks = [text]
 
                     # Further limit chunks for memory efficiency with large models
-                    max_chunks = 4 if "13b" in model_name.lower() else 6
+                    # Increased from 4/6 to 8/12 for better document coverage
+                    max_chunks = 8 if "13b" in model_name.lower() else 12
                     if len(chunks) > max_chunks:
                         print(
                             f"Limiting document from {len(chunks)} to {max_chunks} chunks due to memory constraints"
@@ -515,9 +532,10 @@ def build_llama_features(
                             chunks = [chunks[0]] + selected_middle + [chunks[-1]]
                         else:
                             chunks = chunks[:max_chunks]
-                else:
-                    # Text fits within model's context window
-                    chunks = [text]
+                except Exception as e:
+                    print(f"Error during document chunking: {e}")
+                    print("Falling back to single chunk with truncation")
+                    chunks = [text[: min(len(text), int(max_length * 0.9))]]
 
                 # Process all chunks and generate embeddings
                 try:
