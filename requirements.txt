@@ -11,3 +11,4 @@ matplotlib
 torch
 accelerate
 shap
+psutil

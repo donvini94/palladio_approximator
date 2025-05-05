@@ -14,9 +14,12 @@ RUN	apt-get update && apt-get install -y \
 	&& rm -rf /var/lib/apt/lists/*
 RUN	pip3 install --upgrade pip setuptools wheel
 COPY	requirements.txt	/app/
-RUN	pip3 install      scikit-learn==1.3.2     joblib==1.3.2     pandas==2.1.4     numpy==1.26.3     tqdm==4.66.1     seaborn==0.13.1     matplotlib==3.8.2     mlflow==2.10.0     transformers==4.37.2     tiktoken==0.5.2 \
-	&& pip3 install  torch==2.1.2+cu121 torchvision==0.16.2+cu121 torchaudio==2.1.2 --extra-index-url https://download.pytorch.org/whl/cu121
-COPY	.	/app/
+RUN	pip3 install -r requirements.txt
+COPY	data	/app/
+COPY	models	/app/
+COPY	features	/app/
+COPY	*.py	/app/
+COPY	*.sh	/app/
 ENV	NVIDIA_VISIBLE_DEVICES	all
 ENV	NVIDIA_DRIVER_CAPABILITIES	compute,utility
 CMD	["bash"]

@@ -142,13 +142,22 @@ def get_checkpoint_paths(args):
     return checkpoint_path, embedding_model_path
 
 
-def get_model_path(args):
-    """Generate the model save path based on args.
+def get_model_path(args, experiment_id=None):
+    """Generate the model save path based on args and optional experiment ID.
 
     Args:
         args: Command line arguments with model and prediction_mode
+        experiment_id: Optional unique identifier for the experiment
 
     Returns:
         str: Path where the trained model should be saved
     """
-    return f"{args.model}_{args.prediction_mode}_model.pkl"
+    # Create models directory if it doesn't exist
+    os.makedirs("models/saved", exist_ok=True)
+    
+    if experiment_id:
+        # Use the experiment ID to create a unique filename
+        return f"models/saved/{experiment_id}_model.pkl"
+    else:
+        # Use the basic format for backwards compatibility
+        return f"{args.model}_{args.prediction_mode}_model.pkl"
