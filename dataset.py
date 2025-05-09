@@ -2,12 +2,14 @@ import os
 import pandas as pd
 import glob
 import random
+import joblib
 
 from sklearn.model_selection import train_test_split
 
 
 def load_dataset(
-    data_dir, train_size=0.7, val_size=0.15, test_size=0.15, random_state=42
+    data_dir, train_size=0.7, val_size=0.15, test_size=0.15, random_state=42,
+    save_dataset=False, load_dataset=False
 ):
     """
     Loads DSL model text files and corresponding response time measurements,
@@ -19,10 +21,30 @@ def load_dataset(
         val_size (float): Proportion for the validation split.
         test_size (float): Proportion for the test split.
         random_state (int): Random seed for reproducibility.
+        save_dataset (bool): Whether to save the dataset splits to disk.
+        load_dataset (bool): Whether to load the dataset splits from disk.
 
     Returns:
         tuple: (train_df, val_df, test_df)
     """
+    # Define paths for dataset cache
+    dataset_cache_dir = os.path.join(data_dir, "cache")
+    dataset_cache_path = os.path.join(dataset_cache_dir, "dataset_splits.pkl")
+    
+    # Check if dataset cache exists and we're supposed to load it
+    if load_dataset and os.path.exists(dataset_cache_path):
+        try:
+            print(f"Loading dataset from cache: {dataset_cache_path}")
+            cache = joblib.load(dataset_cache_path)
+            train_df = cache["train_df"]
+            val_df = cache["val_df"]
+            test_df = cache["test_df"]
+            print(f"Successfully loaded dataset with {len(train_df)} train, {len(val_df)} val, {len(test_df)} test samples")
+            return train_df, val_df, test_df
+        except Exception as e:
+            print(f"Error loading dataset cache: {e}")
+            print("Falling back to regenerating dataset...")
+    
     dsl_dir = os.path.join(data_dir, "dsl_models")
     csv_dir = os.path.join(data_dir, "measurements")
     resp_time_col = "Response Time[s]"
@@ -79,6 +101,23 @@ def load_dataset(
     output_csv = os.path.join(data_dir, "all_samples.csv")
     all_samples_df.to_csv(output_csv, index=False)
     print(f"Saved all samples to: {output_csv}")
+
+    # Save dataset splits to cache if requested
+    if save_dataset:
+        try:
+            # Create cache directory if it doesn't exist
+            os.makedirs(dataset_cache_dir, exist_ok=True)
+            
+            # Save splits to cache
+            cache = {
+                "train_df": train_df,
+                "val_df": val_df,
+                "test_df": test_df,
+            }
+            joblib.dump(cache, dataset_cache_path)
+            print(f"Saved dataset splits to cache: {dataset_cache_path}")
+        except Exception as e:
+            print(f"Error saving dataset cache: {e}")
 
     return train_df, val_df, test_df
 

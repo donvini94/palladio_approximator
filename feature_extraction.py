@@ -18,6 +18,398 @@ import gc
 # This prevents the warning when using DataLoader with num_workers > 0
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+"""
+Integration code for feature_extraction.py
+
+This code should be added to your existing feature_extraction.py file to
+integrate structured feature extraction with existing embedding approaches.
+"""
+
+# Import the structured feature extraction module
+# Add this at the top of your feature_extraction.py file
+from structured_features import (
+    extract_structured_features,
+    combine_structured_and_embedded_features,
+)
+
+
+# Then modify the existing build_tfidf_features function to include structured features
+def build_hybrid_tfidf_features(
+    train_samples,
+    val_samples,
+    test_samples,
+    max_features=None,
+    apply_truncated_svd=True,
+    n_components=2000,
+    use_structured_features=True,
+):
+    """
+    Builds hybrid features combining TF-IDF and structured architectural features.
+
+    Args:
+        train_samples: Training data samples (DataFrame)
+        val_samples: Validation data samples (DataFrame)
+        test_samples: Test data samples (DataFrame)
+        max_features: Maximum number of features to extract with TF-IDF
+        apply_truncated_svd: Whether to apply dimensionality reduction
+        n_components: Number of components to keep if using SVD
+        use_structured_features: Whether to include structured features
+
+    Returns:
+        X_train, y_train, X_val, y_val, X_test, y_test, embedding_model
+    """
+    # First build the TF-IDF features using the existing function
+    X_train, y_train, X_val, y_val, X_test, y_test, embedding_model = (
+        build_tfidf_features(
+            train_samples,
+            val_samples,
+            test_samples,
+            max_features=max_features,
+            apply_truncated_svd=apply_truncated_svd,
+            n_components=n_components,
+        )
+    )
+
+    if not use_structured_features:
+        return X_train, y_train, X_val, y_val, X_test, y_test, embedding_model
+
+    print("Adding structured architectural features...")
+
+    # Extract train texts
+    train_texts = train_samples["tpcm_text"].tolist()
+    val_texts = val_samples["tpcm_text"].tolist()
+    test_texts = test_samples["tpcm_text"].tolist()
+
+    # Extract structured features for each set
+    train_structured = [extract_structured_features(text) for text in train_texts]
+    val_structured = [extract_structured_features(text) for text in val_texts]
+    test_structured = [extract_structured_features(text) for text in test_texts]
+
+    # Ensure all structured feature dictionaries have the same keys
+    all_keys = set()
+    for features in train_structured + val_structured + test_structured:
+        all_keys.update(features.keys())
+
+    feature_keys = sorted(list(all_keys))
+
+    # Convert to array format
+    def dict_to_array(feature_dicts, keys):
+        arrays = []
+        for features in feature_dicts:
+            # Ensure all features have the same keys in the same order
+            feat_array = [features.get(key, 0) for key in keys]
+            arrays.append(feat_array)
+        return np.array(arrays)
+
+    train_struct_array = dict_to_array(train_structured, feature_keys)
+    val_struct_array = dict_to_array(val_structured, feature_keys)
+    test_struct_array = dict_to_array(test_structured, feature_keys)
+
+    print(f"Structured features shape: {train_struct_array.shape}")
+
+    # Combine with TF-IDF features
+    from scipy import sparse
+
+    # Check if TF-IDF features are sparse
+    if hasattr(X_train, "toarray"):
+        # Convert structured to sparse and combine
+        train_struct_sparse = sparse.csr_matrix(train_struct_array)
+        val_struct_sparse = sparse.csr_matrix(val_struct_array)
+        test_struct_sparse = sparse.csr_matrix(test_struct_array)
+
+        X_train_combined = sparse.hstack([train_struct_sparse, X_train])
+        X_val_combined = sparse.hstack([val_struct_sparse, X_val])
+        X_test_combined = sparse.hstack([test_struct_sparse, X_test])
+    else:
+        # For dense arrays, use numpy concatenation
+        X_train_combined = np.concatenate([train_struct_array, X_train], axis=1)
+        X_val_combined = np.concatenate([val_struct_array, X_val], axis=1)
+        X_test_combined = np.concatenate([test_struct_array, X_test], axis=1)
+
+    print(f"Combined features shape: {X_train_combined.shape}")
+
+    # Create a combined embedding model that includes structured feature extraction
+    combined_model = {
+        "tfidf_model": embedding_model,
+        "structured_keys": feature_keys,
+        "combined": True,
+    }
+
+    return (
+        X_train_combined,
+        y_train,
+        X_val_combined,
+        y_val,
+        X_test_combined,
+        y_test,
+        combined_model,
+    )
+
+
+# Also modify the BERT features function to include structured features
+def build_hybrid_bert_features(
+    train_samples,
+    val_samples,
+    test_samples,
+    model_name="microsoft/codebert-base",
+    device="cpu",
+    batch_size=32,
+    use_structured_features=True,
+):
+    """
+    Builds hybrid features combining BERT embeddings and structured architectural features.
+
+    Args:
+        train_samples: Training data samples (DataFrame)
+        val_samples: Validation data samples (DataFrame)
+        test_samples: Test data samples (DataFrame)
+        model_name: Name of the pretrained model to use
+        device: Device to run inference on
+        batch_size: Batch size for processing
+        use_structured_features: Whether to include structured features
+
+    Returns:
+        X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model
+    """
+    # First build the BERT features using the existing function
+    X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model = (
+        build_bert_features(
+            train_samples,
+            val_samples,
+            test_samples,
+            model_name=model_name,
+            device=device,
+            batch_size=batch_size,
+        )
+    )
+
+    if not use_structured_features:
+        return X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model
+
+    print("Adding structured architectural features...")
+
+    # Extract train texts
+    train_texts = train_samples["tpcm_text"].tolist()
+    val_texts = val_samples["tpcm_text"].tolist()
+    test_texts = test_samples["tpcm_text"].tolist()
+
+    # Extract structured features for each set
+    train_structured = [extract_structured_features(text) for text in train_texts]
+    val_structured = [extract_structured_features(text) for text in val_texts]
+    test_structured = [extract_structured_features(text) for text in test_texts]
+
+    # Ensure all structured feature dictionaries have the same keys
+    all_keys = set()
+    for features in train_structured + val_structured + test_structured:
+        all_keys.update(features.keys())
+
+    feature_keys = sorted(list(all_keys))
+
+    # Convert to array format
+    def dict_to_array(feature_dicts, keys):
+        arrays = []
+        for features in feature_dicts:
+            # Ensure all features have the same keys in the same order
+            feat_array = [features.get(key, 0) for key in keys]
+            arrays.append(feat_array)
+        return np.array(arrays)
+
+    train_struct_array = dict_to_array(train_structured, feature_keys)
+    val_struct_array = dict_to_array(val_structured, feature_keys)
+    test_struct_array = dict_to_array(test_structured, feature_keys)
+
+    print(f"Structured features shape: {train_struct_array.shape}")
+
+    # Combine with BERT features (which are always dense)
+    X_train_combined = np.concatenate([train_struct_array, X_train], axis=1)
+    X_val_combined = np.concatenate([val_struct_array, X_val], axis=1)
+    X_test_combined = np.concatenate([test_struct_array, X_test], axis=1)
+
+    print(f"Combined features shape: {X_train_combined.shape}")
+
+    # Create a combined model wrapper that includes structured feature extraction info
+    embedding_model = (
+        tokenizer,
+        model,
+        {"structured_keys": feature_keys, "combined": True},
+    )
+
+    return (
+        X_train_combined,
+        y_train,
+        X_val_combined,
+        y_val,
+        X_test_combined,
+        y_test,
+        embedding_model,
+    )
+
+
+# To make it easy to use the new hybrid features, update the extract_features function
+# This modified version of extract_features should be used to replace the existing one
+
+
+def extract_features(args, device):
+    """Extract features based on the specified embedding type.
+
+    Args:
+        args: Command line arguments containing embedding options
+        device (str): 'cuda' or 'cpu' for processing
+
+    Returns:
+        tuple: (X_train, y_train, X_val, y_val, X_test, y_test, embedding_model)
+    """
+    if args.prediction_mode != "summary":
+        raise ValueError("Unsupported prediction mode. Choose 'summary'")
+
+    print("Loading dataset...")
+    train_samples, val_samples, test_samples = load_dataset(
+        args.data_dir, 
+        save_dataset=args.save_dataset, 
+        load_dataset=args.load_dataset
+    )
+    print(f"Dataset loaded. Train samples: {len(train_samples)}")
+
+    # Feature extraction
+    print(
+        f"Building features using {args.embedding} embedding (with structured features)..."
+    )
+
+    # Check if we should use hybrid features with structured architecture information
+    use_structured = getattr(args, "use_structured_features", True)
+
+    if args.embedding == "tfidf":
+        # Configure parameters based on model type
+        if args.model == "torch":
+            max_features = None
+            n_components = 2000
+            apply_truncated_svd = True
+        else:
+            max_features = 10000
+            n_components = 1000
+            apply_truncated_svd = True
+
+        X_train, y_train, X_val, y_val, X_test, y_test, embedding_model = (
+            build_hybrid_tfidf_features(
+                train_samples,
+                val_samples,
+                test_samples,
+                max_features=max_features,
+                apply_truncated_svd=apply_truncated_svd,
+                n_components=n_components,
+                use_structured_features=use_structured,
+            )
+        )
+
+    elif args.embedding == "bert":
+        print(f"Using device: {device}")
+        X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model = (
+            build_hybrid_bert_features(
+                train_samples,
+                val_samples,
+                test_samples,
+                device=device,
+                use_structured_features=use_structured,
+            )
+        )
+        embedding_model = (tokenizer, model)
+
+    elif args.embedding == "llama":
+        # For LLaMA, we would need a similar hybrid approach
+        device = "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
+        if device != "cuda":
+            print("WARNING: Llama models require CUDA. Forcing CUDA if available.")
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        print(f"Using device: {device}")
+        model_name = (
+            args.llama_model if args.llama_model else "codellama/CodeLlama-7b-hf"
+        )
+
+        # First get the base LLaMA features
+        X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model = (
+            build_llama_features(
+                train_samples,
+                val_samples,
+                test_samples,
+                model_name=model_name,
+                device=device,
+                batch_size=args.llama_batch_size,
+                use_half_precision=not args.no_half_precision,
+                use_8bit=args.use_8bit_llama,
+                use_4bit=args.use_4bit_llama,
+                memory_efficient=True,
+            )
+        )
+
+        if use_structured:
+            print("Adding structured architectural features...")
+
+            # Extract train texts
+            train_texts = train_samples["tpcm_text"].tolist()
+            val_texts = val_samples["tpcm_text"].tolist()
+            test_texts = test_samples["tpcm_text"].tolist()
+
+            # Extract structured features for each set
+            train_structured = [
+                extract_structured_features(text) for text in train_texts
+            ]
+            val_structured = [extract_structured_features(text) for text in val_texts]
+            test_structured = [extract_structured_features(text) for text in test_texts]
+
+            # Ensure all structured feature dictionaries have the same keys
+            all_keys = set()
+            for features in train_structured + val_structured + test_structured:
+                all_keys.update(features.keys())
+
+            feature_keys = sorted(list(all_keys))
+
+            # Convert to array format
+            def dict_to_array(feature_dicts, keys):
+                arrays = []
+                for features in feature_dicts:
+                    # Ensure all features have the same keys in the same order
+                    feat_array = [features.get(key, 0) for key in keys]
+                    arrays.append(feat_array)
+                return np.array(arrays)
+
+            train_struct_array = dict_to_array(train_structured, feature_keys)
+            val_struct_array = dict_to_array(val_structured, feature_keys)
+            test_struct_array = dict_to_array(test_structured, feature_keys)
+
+            print(f"Structured features shape: {train_struct_array.shape}")
+
+            # Combine with LLaMA features (which are dense)
+            X_train = np.concatenate([train_struct_array, X_train], axis=1)
+            X_val = np.concatenate([val_struct_array, X_val], axis=1)
+            X_test = np.concatenate([test_struct_array, X_test], axis=1)
+
+            print(f"Combined features shape: {X_train.shape}")
+
+            # Add structured feature info to embedding model
+            embedding_model = (
+                tokenizer,
+                model,
+                {"structured_keys": feature_keys, "combined": True},
+            )
+        else:
+            embedding_model = (tokenizer, model)
+
+        print("Feature extraction completed successfully")
+        print(f"Feature shapes: X_train={X_train.shape}, y_train={y_train.shape}")
+
+        # Free up memory
+        if device == "cuda":
+            print("Clearing GPU cache...")
+            torch.cuda.empty_cache()
+
+    else:
+        raise ValueError(
+            "Unsupported embedding type. Choose 'tfidf', 'bert', or 'llama'"
+        )
+
+    return X_train, y_train, X_val, y_val, X_test, y_test, embedding_model
+
 
 def extract_targets(df):
     """Extract avg/min/max response times from dataframe."""

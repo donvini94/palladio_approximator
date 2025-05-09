@@ -10,10 +10,13 @@ This project predicts system performance metrics (avg/min/max response time) fro
 - 🔍 Embedding methods:
   - `TF-IDF`
   - `BERT (bert-base-uncased)`
+  - `LLaMA` (Code-LLaMA 7B)
 - 🧠 Model types:
   - `Random Forest`
   - `Ridge` / `Lasso` Regression
   - `PyTorch Neural Network`
+- 🏛️ Structured architectural features extraction
+- 🔄 Dataset and feature caching for faster iterations
 - 🔁 Optional MLflow experiment tracking
 - 📦 Cleanly modular & easily extensible
 
@@ -89,6 +92,24 @@ python train.py --model rf --embedding bert --use_cuda
 python train.py --model rf --embedding bert --use_cuda --use_mlflow
 ```
 
+### ➤ Use structured features (enabled by default)
+```bash
+# Using structured features (default)
+python train.py --model rf --embedding tfidf --use_structured_features
+
+# Disable structured features
+python train.py --model rf --embedding tfidf --no_structured_features
+```
+
+### ➤ Dataset Caching (enabled by default)
+```bash
+# Save/load dataset from cache (default)
+python train.py --model rf --embedding tfidf
+
+# Disable dataset caching
+python train.py --model rf --embedding tfidf --no_load_dataset --no_save_dataset
+```
+
 ### ➤ Using Docker
 ```bash
 ./run.sh train rf bert summary
@@ -100,6 +121,8 @@ python train.py --model rf --embedding bert --use_cuda --use_mlflow
 - Trained models: `rf_model.pkl`, `ridge_model.pkl`, etc.
 - Embedding models: `tfidf_embedding.pkl`, or BERT model/tokenizer objects
 - `data/all_samples.csv`: Preprocessed dataset
+- `data/cache/dataset_splits.pkl`: Cached dataset (if enabled)
+- `features/*.pkl`: Cached extracted features (if enabled)
 
 ---
 

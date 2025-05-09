@@ -1,6 +1,7 @@
 """
 Configuration module for handling command line arguments and setup.
 """
+
 import os
 import argparse
 
@@ -91,19 +92,60 @@ def parse_args():
     parser.add_argument(
         "--no_mlflow", dest="use_mlflow", action="store_false", help="Disable MLflow"
     )
+    
+    # Add no_ version for dataset loading options
+    parser.add_argument(
+        "--no_save_dataset",
+        dest="save_dataset", 
+        action="store_false",
+        help="Don't save the dataset splits to disk after loading"
+    )
+    parser.add_argument(
+        "--no_load_dataset",
+        dest="load_dataset", 
+        action="store_false",
+        help="Don't load the dataset splits from disk (regenerate)"
+    )
 
+    # Add this new argument for structured features
+    parser.add_argument(
+        "--use_structured_features",
+        action="store_true",
+        help="Use structured architectural features in addition to embeddings",
+    )
+    parser.add_argument(
+        "--no_structured_features",
+        dest="use_structured_features",
+        action="store_false",
+        help="Disable structured architectural features extraction",
+    )
+    
+    # Dataset caching options
+    parser.add_argument(
+        "--save_dataset",
+        action="store_true",
+        help="Save the dataset splits to disk after loading",
+    )
+    parser.add_argument(
+        "--load_dataset",
+        action="store_true",
+        help="Load the dataset splits from disk instead of regenerating",
+    )
     parser.set_defaults(
         use_cuda=True,
         use_mlflow=True,
         use_gpu=True,
         save_features=True,
         load_features=False,
+        use_structured_features=True,
+        save_dataset=True,
+        load_dataset=True,
     )
 
     print("Parsing arguments...")
     args = parser.parse_args()
     print(f"Arguments: {args}")
-    
+
     return args
 
 
@@ -123,7 +165,7 @@ def get_device(args):
         str: 'cuda' or 'cpu' depending on availability and settings
     """
     import torch
-    
+
     return "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
 
 
@@ -136,9 +178,13 @@ def get_checkpoint_paths(args):
     Returns:
         tuple: (feature_checkpoint_path, embedding_model_path)
     """
-    checkpoint_path = f"features/{args.embedding}_{args.prediction_mode}_features_checkpoint.pkl"
-    embedding_model_path = f"embeddings/{args.embedding}_{args.prediction_mode}_embedding.pkl"
-    
+    checkpoint_path = (
+        f"features/{args.embedding}_{args.prediction_mode}_features_checkpoint.pkl"
+    )
+    embedding_model_path = (
+        f"embeddings/{args.embedding}_{args.prediction_mode}_embedding.pkl"
+    )
+
     return checkpoint_path, embedding_model_path
 
 
@@ -154,7 +200,7 @@ def get_model_path(args, experiment_id=None):
     """
     # Create models directory if it doesn't exist
     os.makedirs("models/saved", exist_ok=True)
-    
+
     if experiment_id:
         # Use the experiment ID to create a unique filename
         return f"models/saved/{experiment_id}_model.pkl"
