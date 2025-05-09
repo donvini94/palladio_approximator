@@ -13,16 +13,42 @@ import warnings
 import os
 import re
 import gc
+import json
+import glob
+from pathlib import Path
 
 # Set tokenizers parallelism explicitly before import/usage
 # This prevents the warning when using DataLoader with num_workers > 0
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 """
-Integration code for feature_extraction.py
+Feature extraction module for Palladio Approximator.
 
-This code should be added to your existing feature_extraction.py file to
-integrate structured feature extraction with existing embedding approaches.
+This module provides functions for generating feature vectors from DSL models using 
+various embedding techniques:
+
+1. TF-IDF: Fast, sparse embeddings suitable for many machine learning models
+2. BERT: Deep contextual embeddings using a pre-trained transformer model
+3. LLaMA: State-of-the-art embeddings using large language models
+
+The module now supports pre-computed LLaMA embeddings to address memory issues
+with large models. When using LLaMA embeddings, the module will:
+
+1. Check for pre-computed embeddings in the specified directory
+2. Use pre-computed embeddings when available
+3. Fall back to on-the-fly generation for samples without pre-computed embeddings
+4. Maintain API compatibility with the rest of the codebase
+
+Pre-computed embeddings are generated using the precompute_llama_embeddings.py script, 
+which efficiently generates and saves embeddings for multiple DSL files in batches.
+
+To use pre-computed embeddings:
+1. Run `python precompute_llama_embeddings.py` to generate the embeddings
+2. Run training normally with `python train.py --embedding llama ...`
+3. The code will automatically detect and use the pre-computed embeddings
+
+Pre-computed embeddings are stored in the 'features/llama_embeddings' directory by default
+and can be configured using the 'precomputed_embeddings_dir' parameter.
 """
 
 # Import the structured feature extraction module
@@ -277,6 +303,10 @@ def extract_features(args, device):
 
     # Check if we should use hybrid features with structured architecture information
     use_structured = getattr(args, "use_structured_features", True)
+    
+    # Check if we should use pre-computed embeddings
+    use_precomputed_embeddings = getattr(args, "use_precomputed_embeddings", True)
+    precomputed_embeddings_dir = getattr(args, "precomputed_embeddings_dir", "features/llama_embeddings")
 
     if args.embedding == "tfidf":
         # Configure parameters based on model type
@@ -326,7 +356,7 @@ def extract_features(args, device):
             args.llama_model if args.llama_model else "codellama/CodeLlama-7b-hf"
         )
 
-        # First get the base LLaMA features
+        # First get the base LLaMA features, with potential pre-computed embeddings
         X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model = (
             build_llama_features(
                 train_samples,
@@ -339,6 +369,8 @@ def extract_features(args, device):
                 use_8bit=args.use_8bit_llama,
                 use_4bit=args.use_4bit_llama,
                 memory_efficient=True,
+                use_precomputed_embeddings=use_precomputed_embeddings,
+                precomputed_embeddings_dir=precomputed_embeddings_dir
             )
         )
 
@@ -387,19 +419,33 @@ def extract_features(args, device):
             print(f"Combined features shape: {X_train.shape}")
 
             # Add structured feature info to embedding model
-            embedding_model = (
-                tokenizer,
-                model,
-                {"structured_keys": feature_keys, "combined": True},
-            )
+            # Handle different types of embedding models returned by build_llama_features
+            if isinstance(model, dict) and model.get("precomputed", False):
+                # For a pre-computed model dict, add structured feature info
+                model.update({
+                    "structured_keys": feature_keys,
+                    "combined": True
+                })
+                embedding_model = (tokenizer, model)
+            else:
+                # For a standard model, use the tuple with structured info
+                embedding_model = (
+                    tokenizer,
+                    model,
+                    {"structured_keys": feature_keys, "combined": True},
+                )
         else:
-            embedding_model = (tokenizer, model)
+            # Just use the model as is
+            if isinstance(model, dict) and model.get("precomputed", False):
+                embedding_model = (tokenizer, model)
+            else:
+                embedding_model = (tokenizer, model)
 
         print("Feature extraction completed successfully")
         print(f"Feature shapes: X_train={X_train.shape}, y_train={y_train.shape}")
 
         # Free up memory
-        if device == "cuda":
+        if device == "cuda" and torch.cuda.is_available():
             print("Clearing GPU cache...")
             torch.cuda.empty_cache()
 
@@ -538,6 +584,8 @@ def build_llama_features(
     use_8bit=False,  # Whether to use 8-bit quantization
     use_4bit=False,  # Whether to use 4-bit quantization (most memory efficient)
     memory_efficient=True,  # Use memory-efficient settings
+    use_precomputed_embeddings=True,  # Whether to use pre-computed embeddings when available
+    precomputed_embeddings_dir="features/llama_embeddings",  # Directory with pre-computed embeddings
 ):
     """
     Builds embeddings using Llama-based models (like CodeLlama) and target arrays from dataset samples.
@@ -551,12 +599,245 @@ def build_llama_features(
         device: Device to run inference on ('cpu' or 'cuda')
         batch_size: Batch size for processing (smaller for large models)
         use_half_precision: Whether to use half precision (float16) to save memory
+        use_8bit: Whether to use 8-bit quantization
+        use_4bit: Whether to use 4-bit quantization (most memory efficient)
+        memory_efficient: Whether to use memory-efficient settings
+        use_precomputed_embeddings: Whether to use pre-computed embeddings when available
+        precomputed_embeddings_dir: Directory containing pre-computed embeddings
 
     Returns:
         X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model
     """
-    print(f"Setting up embeddings with {model_name}")
+    # First, try to use pre-computed embeddings if requested
+    if use_precomputed_embeddings:
+        print("Checking for pre-computed LLaMA embeddings...")
+        
+        try:
+            # Try to load pre-computed embeddings
+            all_embeddings, metadata, sample_ids_with_embeddings, sample_ids_without_embeddings = load_precomputed_llama_embeddings(
+                [train_samples, val_samples, test_samples],
+                embeddings_dir=precomputed_embeddings_dir
+            )
+            
+            # Check if we have a good coverage of embeddings
+            total_samples = len(train_samples) + len(val_samples) + len(test_samples)
+            coverage = len(sample_ids_with_embeddings) / total_samples
+            
+            # Get embeddings and indices
+            train_embeddings, train_indices_with_emb, train_indices_without_emb = all_embeddings[0]
+            val_embeddings, val_indices_with_emb, val_indices_without_emb = all_embeddings[1]
+            test_embeddings, test_indices_with_emb, test_indices_without_emb = all_embeddings[2]
+            
+            if coverage > 0.95:  # More than 95% coverage, just use pre-computed
+                print(f"Using pre-computed embeddings for all samples (coverage: {coverage:.2%})")
+                
+                # Extract targets
+                y_train = extract_targets(train_samples)
+                y_val = extract_targets(val_samples)
+                y_test = extract_targets(test_samples)
+                
+                # Create mock tokenizer and model for API compatibility
+                tokenizer = None
+                model = None
+                
+                # Create a mock model container with metadata
+                if metadata:
+                    embedding_dim = metadata.get('embedding_dim', 4096)
+                    model_info = {
+                        "model_name": metadata.get("model_name", model_name),
+                        "embedding_dim": embedding_dim,
+                        "precomputed": True,
+                        "coverage": coverage,
+                        "metadata": metadata,
+                    }
+                    model = model_info
+                
+                return train_embeddings, y_train, val_embeddings, y_val, test_embeddings, y_test, tokenizer, model
+                
+            # Always use what's available, regardless of coverage percentage
+            # Even low coverage is better than re-computing everything
+            print(f"Using pre-computed embeddings where available (coverage: {coverage:.2%})")
+            print(f"Will generate embeddings for {len(sample_ids_without_embeddings)} remaining samples")
+            
+            # Need to load model for remaining samples
+            tokenizer, model = _load_llama_model(
+                model_name, device, use_half_precision, use_8bit, use_4bit, memory_efficient
+            )
+            
+            # Function to get samples without embeddings
+            def get_samples_without_embeddings(samples, indices_without_emb):
+                return samples.iloc[indices_without_emb].reset_index(drop=True)
+            
+            # Get samples that need embeddings
+            train_without_emb = get_samples_without_embeddings(train_samples, train_indices_without_emb) if train_indices_without_emb else None
+            val_without_emb = get_samples_without_embeddings(val_samples, val_indices_without_emb) if val_indices_without_emb else None
+            test_without_emb = get_samples_without_embeddings(test_samples, test_indices_without_emb) if test_indices_without_emb else None
+            
+            # Generate embeddings for remaining samples
+            # Use the existing encoder function
+            print("Generating embeddings for remaining samples...")
+            
+            def generate_missing_embeddings(samples_without_emb, embedding_dim):
+                if not samples_without_emb or len(samples_without_emb) == 0:
+                    return np.zeros((0, embedding_dim))
+                return _encode_with_llama(
+                    samples_without_emb, tokenizer, model, device, 
+                    max_length=1024,  # Default for LLaMA
+                    sliding_window_overlap=100,
+                    max_chunks_per_doc=15,
+                    use_half_precision=use_half_precision
+                )
+            
+            # Get embedding dimension
+            embedding_dim = metadata.get('embedding_dim', 4096) if metadata else 4096
+            if not embedding_dim and hasattr(model, 'config') and hasattr(model.config, 'hidden_size'):
+                embedding_dim = model.config.hidden_size
+            
+            # Generate missing embeddings
+            train_missing_embeddings = generate_missing_embeddings(train_without_emb, embedding_dim) if train_without_emb is not None else None
+            val_missing_embeddings = generate_missing_embeddings(val_without_emb, embedding_dim) if val_without_emb is not None else None
+            test_missing_embeddings = generate_missing_embeddings(test_without_emb, embedding_dim) if test_without_emb is not None else None
+            
+            # Complete the embeddings by filling in the missing values
+            def complete_embeddings(precomputed_embeddings, indices_with_emb, indices_without_emb, missing_embeddings, total_samples):
+                # Create a new array for the complete embeddings
+                complete = np.zeros((total_samples, precomputed_embeddings.shape[1]))
+                
+                # Fill in the pre-computed embeddings
+                for idx, emb_idx in enumerate(indices_with_emb):
+                    complete[emb_idx] = precomputed_embeddings[emb_idx]
+                
+                # Fill in the newly computed embeddings
+                if missing_embeddings is not None and indices_without_emb:
+                    for idx, emb_idx in enumerate(indices_without_emb):
+                        if idx < len(missing_embeddings):
+                            complete[emb_idx] = missing_embeddings[idx]
+                
+                return complete
+            
+            # Complete all embeddings
+            X_train = complete_embeddings(train_embeddings, train_indices_with_emb, train_indices_without_emb, 
+                                          train_missing_embeddings, len(train_samples))
+            X_val = complete_embeddings(val_embeddings, val_indices_with_emb, val_indices_without_emb, 
+                                        val_missing_embeddings, len(val_samples))
+            X_test = complete_embeddings(test_embeddings, test_indices_with_emb, test_indices_without_emb, 
+                                         test_missing_embeddings, len(test_samples))
+            
+            # Extract targets
+            y_train = extract_targets(train_samples)
+            y_val = extract_targets(val_samples)
+            y_test = extract_targets(test_samples)
+            
+            # Add metadata to model
+            if isinstance(model, dict):
+                model.update({
+                    "precomputed_partial": True,
+                    "coverage": coverage,
+                    "metadata": metadata
+                })
+                
+            print("Feature extraction complete (hybrid pre-computed/on-the-fly)!")
+            print(f"Features shape: X_train={X_train.shape}, y_train={y_train.shape}")
+            print(f"X_val={X_val.shape}, X_test={X_test.shape}")
+            
+            # Free GPU memory
+            if device == "cuda":
+                print("Clearing GPU cache...")
+                torch.cuda.empty_cache()
+            
+            return X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model
+        
+        except Exception as e:
+            print(f"Error using pre-computed embeddings: {e}")
+            print("Falling back to on-the-fly embedding generation")
+    
+    # If we got here, we're generating embeddings without using pre-computed ones
+    print(f"Setting up embeddings with {model_name} (on-the-fly generation)")
+    
+    # Load the LLaMA model
+    tokenizer, model = _load_llama_model(
+        model_name, device, use_half_precision, use_8bit, use_4bit, memory_efficient
+    )
+    
+    # Get model context length - LLaMA models can handle much longer contexts
+    try:
+        # Try to get context length from model config
+        if hasattr(model.config, "max_position_embeddings"):
+            max_length = model.config.max_position_embeddings - 2
+        else:
+            # Try common attributes for max length
+            config_attrs = [
+                "max_sequence_length",
+                "seq_length",
+                "n_positions",
+                "max_seq_len",
+            ]
+            for attr in config_attrs:
+                if hasattr(model.config, attr):
+                    max_length = getattr(model.config, attr) - 2
+                    break
+            else:
+                # Fallback values based on model name patterns
+                if "13b" in model_name.lower():
+                    max_length = 4096 - 2
+                else:
+                    max_length = 2048 - 2
 
+        print(f"Using model's max sequence length: {max_length}")
+    except:
+        # Fall back to conservative default for LLaMA
+        max_length = 2048 - 2
+        print(f"Using default max sequence length: {max_length}")
+
+    # For long inputs, we need specific handling strategies
+    sliding_window_overlap = 100  # More overlap for better context preservation
+    max_chunks_per_doc = 15  # Increased from 10 to handle very long documents better
+
+    # Process datasets
+    print(f"Processing training set ({len(train_samples)} samples)...")
+    X_train = _encode_with_llama(
+        train_samples, tokenizer, model, device,
+        max_length=max_length,
+        sliding_window_overlap=sliding_window_overlap,
+        max_chunks_per_doc=max_chunks_per_doc,
+        use_half_precision=use_half_precision
+    )
+    y_train = extract_targets(train_samples)
+
+    print(f"Processing validation set ({len(val_samples)} samples)...")
+    X_val = _encode_with_llama(
+        val_samples, tokenizer, model, device,
+        max_length=max_length,
+        sliding_window_overlap=sliding_window_overlap,
+        max_chunks_per_doc=max_chunks_per_doc,
+        use_half_precision=use_half_precision
+    )
+    y_val = extract_targets(val_samples)
+
+    print(f"Processing test set ({len(test_samples)} samples)...")
+    X_test = _encode_with_llama(
+        test_samples, tokenizer, model, device,
+        max_length=max_length,
+        sliding_window_overlap=sliding_window_overlap,
+        max_chunks_per_doc=max_chunks_per_doc,
+        use_half_precision=use_half_precision
+    )
+    y_test = extract_targets(test_samples)
+
+    print("Feature extraction complete!")
+    print(f"Features shape: X_train={X_train.shape}, y_train={y_train.shape}")
+    print(f"X_val={X_val.shape}, X_test={X_test.shape}")
+
+    # Free GPU memory
+    if device == "cuda":
+        print("Clearing GPU cache...")
+        torch.cuda.empty_cache()
+
+    return X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model
+
+
+def _load_llama_model(model_name, device, use_half_precision, use_8bit, use_4bit, memory_efficient):
+    """Helper function to load the LLaMA model with optimizations."""
     # Force device to CPU if CUDA not available
     if device == "cuda" and not torch.cuda.is_available():
         print("CUDA requested but not available. Using CPU instead.")
@@ -690,297 +971,251 @@ def build_llama_features(
             raise RuntimeError(
                 "Could not load any Llama model. Please check your transformers and torch installation."
             )
+    
+    return tokenizer, model
 
-    # Get model context length - LLaMA models can handle much longer contexts
-    try:
-        # Try to get context length from model config
-        if hasattr(model.config, "max_position_embeddings"):
-            max_length = model.config.max_position_embeddings - 2
-        else:
-            # Try common attributes for max length
-            config_attrs = [
-                "max_sequence_length",
-                "seq_length",
-                "n_positions",
-                "max_seq_len",
-            ]
-            for attr in config_attrs:
-                if hasattr(model.config, attr):
-                    max_length = getattr(model.config, attr) - 2
-                    break
-            else:
-                # Fallback values based on model name patterns
-                if "13b" in model_name.lower():
-                    max_length = 4096 - 2
-                else:
-                    max_length = 2048 - 2
 
-        print(f"Using model's max sequence length: {max_length}")
-    except:
-        # Fall back to conservative default for LLaMA
-        max_length = 2048 - 2
-        print(f"Using default max sequence length: {max_length}")
+def _encode_with_llama(df, tokenizer, model, device, max_length=1024, 
+                       sliding_window_overlap=100, max_chunks_per_doc=15,
+                       use_half_precision=True):
+    """
+    Create embeddings from text using a Llama-based model.
+    Optimized for long code sequences and large models.
+    """
+    texts = df["tpcm_text"].tolist()
+    embeddings = []
 
-    # For long inputs, we need specific handling strategies
-    sliding_window_overlap = 100  # More overlap for better context preservation
-    max_chunks_per_doc = 15  # Increased from 10 to handle very long documents better
+    # Use mixed precision for efficiency
+    amp_enabled = device == "cuda" and use_half_precision
 
-    # Create a function to encode DSL files with a Llama model
-    def encode_with_llama(df):
-        """
-        Create embeddings from text using a Llama-based model.
-        Optimized for long code sequences and large models.
-        """
-        texts = df["tpcm_text"].tolist()
-        embeddings = []
+    # For memory monitoring
+    if device == "cuda" and torch.cuda.is_available():
+        peak_memory = 0
 
-        # Use mixed precision for efficiency
-        amp_enabled = device == "cuda" and use_half_precision
+        def log_memory():
+            nonlocal peak_memory
+            current = torch.cuda.max_memory_allocated() / (1024**3)
+            if current > peak_memory:
+                peak_memory = current
+                print(f"Peak GPU memory usage: {peak_memory:.2f} GB")
 
-        # For memory monitoring
-        if device == "cuda" and torch.cuda.is_available():
-            peak_memory = 0
+            # Clear memory statistics
+            torch.cuda.reset_peak_memory_stats()
+            # Free cache
+            torch.cuda.empty_cache()
 
-            def log_memory():
-                nonlocal peak_memory
-                current = torch.cuda.max_memory_allocated() / (1024**3)
-                if current > peak_memory:
-                    peak_memory = current
-                    print(f"Peak GPU memory usage: {peak_memory:.2f} GB")
+        log_memory()
+    else:
 
-                # Clear memory statistics
-                torch.cuda.reset_peak_memory_stats()
-                # Free cache
-                torch.cuda.empty_cache()
+        def log_memory():
+            pass
 
-            log_memory()
-        else:
+    # Process texts one by one to minimize memory usage
+    actual_batch_size = 1  # Force batch size to 1 for LLaMA
+    for i in tqdm(
+        range(0, len(texts), actual_batch_size), desc=f"Encoding with LLaMA"
+    ):
+        batch_texts = texts[i : i + actual_batch_size]
+        batch_embeddings = []
 
-            def log_memory():
-                pass
+        # Aggressive memory cleanup before processing each text
+        if device == "cuda":
+            torch.cuda.empty_cache()
+            gc.collect()
 
-        # Process texts one by one to minimize memory usage
-        actual_batch_size = 1  # Force batch size to 1 for LLaMA
-        for i in tqdm(
-            range(0, len(texts), actual_batch_size), desc=f"Encoding with {model_name}"
-        ):
-            batch_texts = texts[i : i + actual_batch_size]
-            batch_embeddings = []
+        # Process each text in batch
+        for text in batch_texts:
+            # Initialize chunks to an empty list at the beginning
+            chunks = []
 
-            # Aggressive memory cleanup before processing each text
-            if device == "cuda":
-                torch.cuda.empty_cache()
-                gc.collect()
-
-            # Process each text in batch
-            for text in batch_texts:
-                # Initialize chunks to an empty list at the beginning
-                chunks = []
-
-                # Handle empty text
-                if not text or len(text.strip()) == 0:
-                    # Create embedding for empty text
-                    inputs = tokenizer(" ", return_tensors="pt", padding=True).to(
-                        device
-                    )
-                    with torch.no_grad():
-                        # For CausalLM models, use the hidden states
-                        if isinstance(model, AutoModelForCausalLM):
-                            outputs = model(**inputs, output_hidden_states=True)
-                            # Use last layer's hidden state of the last token
-                            embedding = (
-                                outputs.hidden_states[-1][0, -1, :].cpu().numpy()
-                            )
-                        else:
-                            outputs = model(**inputs)
-                            embedding = (
-                                outputs.last_hidden_state[:, 0, :].cpu().numpy()[0]
-                            )
-
-                    normalized_emb = embedding / np.linalg.norm(embedding)
-                    batch_embeddings.append(normalized_emb)
-                    continue
-
-                try:
-                    # Tokenize the text to get token IDs
-                    tokenized_text = tokenizer.encode(
-                        text,
-                        add_special_tokens=False,
-                        truncation=False,
-                        return_tensors=None,
-                    )
-
-                    token_count = len(tokenized_text)
-
-                    if token_count > max_length:
-                        # For long documents, use a chunking approach appropriate for Llama models
-                        # LLaMA models can handle longer contexts, but we still need chunking for very long inputs
-
-                        # Find natural break points (focusing on code structure)
-                        natural_breaks = []
-                        for pattern in [
-                            r"\n\s*def\s+",
-                            r"\n\s*class\s+",
-                            r"\n\s*if\s+__name__",
-                            r"\n\s*#",
-                        ]:
-                            for match in re.finditer(pattern, text):
-                                natural_breaks.append((match.start(), "code_structure"))
-
-                        # Also add simple newline blocks as potential break points
-                        for match in re.finditer(r"\n\n+", text):
-                            natural_breaks.append((match.start(), "newline"))
-
-                        # Sort breaks by position
-                        natural_breaks.sort(key=lambda x: x[0])
-
-                        # Handle chunking
-                        if not natural_breaks:
-                            # No natural breaks - use token-based chunking
-                            # For LLaMA, we can use longer chunks
-                            effective_length = max_length - sliding_window_overlap
-
-                            chunks = []
-                            for j in range(0, token_count, effective_length):
-                                # Get token IDs for this chunk with overlap
-                                end_idx = min(j + max_length, token_count)
-                                chunk_tokens = tokenized_text[j:end_idx]
-                                chunk_text = tokenizer.decode(chunk_tokens)
-                                chunks.append(chunk_text)
-                        else:
-                            # Use natural breaks
-                            chunks = []
-                            start_pos = 0
-
-                            # Estimate character length per token
-                            char_ratio = len(text) / token_count
-                            target_char_length = int(
-                                max_length * char_ratio * 0.9
-                            )  # 90% to be safe
-
-                            while start_pos < len(text):
-                                target_pos = start_pos + target_char_length
-                                if target_pos >= len(text):
-                                    chunks.append(text[start_pos:])
-                                    break
-
-                                # Find break points near our target position
-                                valid_breaks = [
-                                    b
-                                    for b in natural_breaks
-                                    if b[0] > start_pos and b[0] <= target_pos + 1000
-                                ]
-
-                                if valid_breaks:
-                                    # Prioritize code structure breaks over simple newlines
-                                    code_breaks = [
-                                        b
-                                        for b in valid_breaks
-                                        if b[1] == "code_structure"
-                                    ]
-                                    if code_breaks:
-                                        break_pos = code_breaks[-1][0]
-                                    else:
-                                        break_pos = valid_breaks[-1][0]
-
-                                    chunks.append(text[start_pos : break_pos + 1])
-                                    start_pos = break_pos + 1
-                                else:
-                                    # No good break found
-                                    safe_pos = min(target_pos, len(text) - 1)
-                                    chunks.append(text[start_pos:safe_pos])
-                                    start_pos = safe_pos
-
-                                # Safety check
-                                if len(chunks) >= max_chunks_per_doc:
-                                    if start_pos < len(text):
-                                        chunks.append(text[start_pos:])
-                                    break
+            # Handle empty text
+            if not text or len(text.strip()) == 0:
+                # Create embedding for empty text
+                inputs = tokenizer(" ", return_tensors="pt", padding=True).to(
+                    device
+                )
+                with torch.no_grad():
+                    # For CausalLM models, use the hidden states
+                    if isinstance(model, AutoModelForCausalLM):
+                        outputs = model(**inputs, output_hidden_states=True)
+                        # Use last layer's hidden state of the last token
+                        embedding = (
+                            outputs.hidden_states[-1][0, -1, :].cpu().numpy()
+                        )
                     else:
-                        # Text fits within model's context window
-                        chunks = [text]
-
-                    # Safety check - ensure chunks is not empty
-                    if not chunks:
-                        print(
-                            "Warning: Chunks list is empty, using whole text as single chunk"
+                        outputs = model(**inputs)
+                        embedding = (
+                            outputs.last_hidden_state[:, 0, :].cpu().numpy()[0]
                         )
-                        chunks = [text]
 
-                    # Further limit chunks for memory efficiency with large models
-                    # Increased from 4/6 to 8/12 for better document coverage
-                    max_chunks = 8 if "13b" in model_name.lower() else 12
-                    if len(chunks) > max_chunks:
-                        print(
-                            f"Limiting document from {len(chunks)} to {max_chunks} chunks due to memory constraints"
-                        )
-                        # Keep first, last, and evenly sample the middle chunks
-                        if max_chunks >= 3:
-                            middle_chunks = chunks[1:-1]
-                            num_middle = max_chunks - 2
-                            step = len(middle_chunks) / num_middle
-                            middle_indices = [int(i * step) for i in range(num_middle)]
-                            selected_middle = [middle_chunks[i] for i in middle_indices]
-                            chunks = [chunks[0]] + selected_middle + [chunks[-1]]
-                        else:
-                            chunks = chunks[:max_chunks]
-                except Exception as e:
-                    print(f"Error during document chunking: {e}")
-                    print("Falling back to single chunk with truncation")
-                    chunks = [text[: min(len(text), int(max_length * 0.9))]]
+                normalized_emb = embedding / np.linalg.norm(embedding)
+                batch_embeddings.append(normalized_emb)
+                continue
 
-                # Process all chunks and generate embeddings
-                try:
-                    chunk_embeddings = []
+            try:
+                # Tokenize the text to get token IDs
+                tokenized_text = tokenizer.encode(
+                    text,
+                    add_special_tokens=False,
+                    truncation=False,
+                    return_tensors=None,
+                )
 
-                    # Process chunks one by one with memory cleanup between
-                    for chunk_idx, chunk in enumerate(chunks):
-                        # Log memory usage
-                        if chunk_idx > 0 and chunk_idx % 2 == 0:
-                            log_memory()
+                token_count = len(tokenized_text)
 
-                        # Tokenize with appropriate padding for LLaMA
-                        inputs = tokenizer(
-                            chunk,
-                            padding="max_length",
-                            truncation=True,
-                            max_length=max_length,
-                            return_tensors="pt",
-                        ).to(device)
+                if token_count > max_length:
+                    # For long documents, use a chunking approach appropriate for Llama models
+                    # LLaMA models can handle longer contexts, but we still need chunking for very long inputs
 
-                        # Clear tokenizer cache and garbage collect
-                        if device == "cuda":
-                            torch.cuda.empty_cache()
+                    # Find natural break points (focusing on code structure)
+                    natural_breaks = []
+                    for pattern in [
+                        r"\n\s*def\s+",
+                        r"\n\s*class\s+",
+                        r"\n\s*if\s+__name__",
+                        r"\n\s*#",
+                    ]:
+                        for match in re.finditer(pattern, text):
+                            natural_breaks.append((match.start(), "code_structure"))
 
-                        # Generate embeddings
-                        with torch.no_grad():
-                            if amp_enabled:
-                                with torch.amp.autocast("cuda"):
-                                    if isinstance(model, AutoModelForCausalLM):
-                                        outputs = model(
-                                            **inputs, output_hidden_states=True
-                                        )
-                                        # Use last hidden layer representation
-                                        hidden_states = outputs.hidden_states[-1]
-                                        # Average the token embeddings
-                                        mask = inputs.attention_mask.unsqueeze(-1)
-                                        # Use mean pooling over sequence
-                                        embedding = torch.sum(
-                                            hidden_states * mask, dim=1
-                                        ) / torch.sum(mask, dim=1)
-                                        embedding = embedding.cpu().numpy()[0]
-                                    else:
-                                        outputs = model(**inputs)
-                                        embedding = (
-                                            outputs.last_hidden_state[:, 0, :]
-                                            .cpu()
-                                            .numpy()[0]
-                                        )
+                    # Also add simple newline blocks as potential break points
+                    for match in re.finditer(r"\n\n+", text):
+                        natural_breaks.append((match.start(), "newline"))
+
+                    # Sort breaks by position
+                    natural_breaks.sort(key=lambda x: x[0])
+
+                    # Handle chunking
+                    if not natural_breaks:
+                        # No natural breaks - use token-based chunking
+                        # For LLaMA, we can use longer chunks
+                        effective_length = max_length - sliding_window_overlap
+
+                        chunks = []
+                        for j in range(0, token_count, effective_length):
+                            # Get token IDs for this chunk with overlap
+                            end_idx = min(j + max_length, token_count)
+                            chunk_tokens = tokenized_text[j:end_idx]
+                            chunk_text = tokenizer.decode(chunk_tokens)
+                            chunks.append(chunk_text)
+                    else:
+                        # Use natural breaks
+                        chunks = []
+                        start_pos = 0
+
+                        # Estimate character length per token
+                        char_ratio = len(text) / token_count
+                        target_char_length = int(
+                            max_length * char_ratio * 0.9
+                        )  # 90% to be safe
+
+                        while start_pos < len(text):
+                            target_pos = start_pos + target_char_length
+                            if target_pos >= len(text):
+                                chunks.append(text[start_pos:])
+                                break
+
+                            # Find break points near our target position
+                            valid_breaks = [
+                                b
+                                for b in natural_breaks
+                                if b[0] > start_pos and b[0] <= target_pos + 1000
+                            ]
+
+                            if valid_breaks:
+                                # Prioritize code structure breaks over simple newlines
+                                code_breaks = [
+                                    b
+                                    for b in valid_breaks
+                                    if b[1] == "code_structure"
+                                ]
+                                if code_breaks:
+                                    break_pos = code_breaks[-1][0]
+                                else:
+                                    break_pos = valid_breaks[-1][0]
+
+                                chunks.append(text[start_pos : break_pos + 1])
+                                start_pos = break_pos + 1
                             else:
+                                # No good break found
+                                safe_pos = min(target_pos, len(text) - 1)
+                                chunks.append(text[start_pos:safe_pos])
+                                start_pos = safe_pos
+
+                            # Safety check
+                            if len(chunks) >= max_chunks_per_doc:
+                                if start_pos < len(text):
+                                    chunks.append(text[start_pos:])
+                                break
+                else:
+                    # Text fits within model's context window
+                    chunks = [text]
+
+                # Safety check - ensure chunks is not empty
+                if not chunks:
+                    print(
+                        "Warning: Chunks list is empty, using whole text as single chunk"
+                    )
+                    chunks = [text]
+
+                # Further limit chunks for memory efficiency with large models
+                # Increased from 4/6 to 8/12 for better document coverage
+                max_chunks = 8 if "13b" in getattr(model, "config", {}).name_or_path.lower() else 12
+                if len(chunks) > max_chunks:
+                    print(
+                        f"Limiting document from {len(chunks)} to {max_chunks} chunks due to memory constraints"
+                    )
+                    # Keep first, last, and evenly sample the middle chunks
+                    if max_chunks >= 3:
+                        middle_chunks = chunks[1:-1]
+                        num_middle = max_chunks - 2
+                        step = len(middle_chunks) / num_middle
+                        middle_indices = [int(i * step) for i in range(num_middle)]
+                        selected_middle = [middle_chunks[i] for i in middle_indices]
+                        chunks = [chunks[0]] + selected_middle + [chunks[-1]]
+                    else:
+                        chunks = chunks[:max_chunks]
+            except Exception as e:
+                print(f"Error during document chunking: {e}")
+                print("Falling back to single chunk with truncation")
+                chunks = [text[: min(len(text), int(max_length * 0.9))]]
+
+            # Process all chunks and generate embeddings
+            try:
+                chunk_embeddings = []
+
+                # Process chunks one by one with memory cleanup between
+                for chunk_idx, chunk in enumerate(chunks):
+                    # Log memory usage
+                    if chunk_idx > 0 and chunk_idx % 2 == 0:
+                        log_memory()
+
+                    # Tokenize with appropriate padding for LLaMA
+                    inputs = tokenizer(
+                        chunk,
+                        padding="max_length",
+                        truncation=True,
+                        max_length=max_length,
+                        return_tensors="pt",
+                    ).to(device)
+
+                    # Clear tokenizer cache and garbage collect
+                    if device == "cuda":
+                        torch.cuda.empty_cache()
+
+                    # Generate embeddings
+                    with torch.no_grad():
+                        if amp_enabled:
+                            with torch.amp.autocast("cuda"):
                                 if isinstance(model, AutoModelForCausalLM):
-                                    outputs = model(**inputs, output_hidden_states=True)
+                                    outputs = model(
+                                        **inputs, output_hidden_states=True
+                                    )
+                                    # Use last hidden layer representation
                                     hidden_states = outputs.hidden_states[-1]
+                                    # Average the token embeddings
                                     mask = inputs.attention_mask.unsqueeze(-1)
+                                    # Use mean pooling over sequence
                                     embedding = torch.sum(
                                         hidden_states * mask, dim=1
                                     ) / torch.sum(mask, dim=1)
@@ -992,113 +1227,257 @@ def build_llama_features(
                                         .cpu()
                                         .numpy()[0]
                                     )
-
-                        # Normalize embedding
-                        normalized_emb = embedding / np.linalg.norm(embedding)
-                        chunk_embeddings.append(normalized_emb)
-
-                    # Combine chunk embeddings with smart weighting
-                    if len(chunk_embeddings) > 1:
-                        # Use position and content-based weighting
-                        num_chunks = len(chunk_embeddings)
-
-                        # Position weights emphasize beginning and end
-                        pos_weights = np.ones(num_chunks)
-                        if num_chunks >= 3:
-                            pos_weights[0] = 1.5  # First chunk (imports, declarations)
-                            pos_weights[-1] = 1.3  # Last chunk (often main logic)
-
-                        # Length-based weights
-                        length_weights = np.array([len(c) for c in chunks])
-                        length_weights = length_weights / length_weights.sum()
-
-                        # Final weights
-                        final_weights = 0.4 * pos_weights + 0.6 * length_weights
-                        final_weights = final_weights / final_weights.sum()
-
-                        # Apply weights
-                        weighted_emb = np.zeros_like(chunk_embeddings[0])
-                        for j, emb in enumerate(chunk_embeddings):
-                            weighted_emb += emb * final_weights[j]
-
-                        # Normalize combined embedding
-                        weighted_emb_norm = weighted_emb / np.linalg.norm(weighted_emb)
-                        batch_embeddings.append(weighted_emb_norm)
-                    elif len(chunk_embeddings) == 1:
-                        # Just one chunk
-                        batch_embeddings.append(chunk_embeddings[0])
-                    else:
-                        # Fallback for empty chunks
-                        print("Warning: No chunk embeddings created, using fallback")
-                        inputs = tokenizer(" ", return_tensors="pt").to(device)
-
-                        with torch.no_grad():
+                        else:
                             if isinstance(model, AutoModelForCausalLM):
                                 outputs = model(**inputs, output_hidden_states=True)
-                                embedding = (
-                                    outputs.hidden_states[-1][0, -1, :].cpu().numpy()
-                                )
+                                hidden_states = outputs.hidden_states[-1]
+                                mask = inputs.attention_mask.unsqueeze(-1)
+                                embedding = torch.sum(
+                                    hidden_states * mask, dim=1
+                                ) / torch.sum(mask, dim=1)
+                                embedding = embedding.cpu().numpy()[0]
                             else:
                                 outputs = model(**inputs)
                                 embedding = (
-                                    outputs.last_hidden_state[:, 0, :].cpu().numpy()[0]
+                                    outputs.last_hidden_state[:, 0, :]
+                                    .cpu()
+                                    .numpy()[0]
                                 )
 
-                        normalized_emb = embedding / np.linalg.norm(embedding)
-                        batch_embeddings.append(normalized_emb)
+                    # Normalize embedding
+                    normalized_emb = embedding / np.linalg.norm(embedding)
+                    chunk_embeddings.append(normalized_emb)
 
-                except Exception as e:
-                    print(f"Error processing chunks: {e}")
-                    # Fallback embedding (zeros)
-                    if isinstance(model, AutoModelForCausalLM):
-                        embedding_dim = model.config.hidden_size
-                    else:
-                        embedding_dim = model.config.hidden_size
+                # Combine chunk embeddings with smart weighting
+                if len(chunk_embeddings) > 1:
+                    # Use position and content-based weighting
+                    num_chunks = len(chunk_embeddings)
 
-                    fallback_emb = np.zeros(embedding_dim)
-                    batch_embeddings.append(fallback_emb)
+                    # Position weights emphasize beginning and end
+                    pos_weights = np.ones(num_chunks)
+                    if num_chunks >= 3:
+                        pos_weights[0] = 1.5  # First chunk (imports, declarations)
+                        pos_weights[-1] = 1.3  # Last chunk (often main logic)
 
-            # Add batch embeddings to result
-            embeddings.extend(batch_embeddings)
+                    # Length-based weights
+                    length_weights = np.array([len(c) for c in chunks])
+                    length_weights = length_weights / length_weights.sum()
 
-            # Clear GPU cache
-            if device == "cuda":
-                torch.cuda.empty_cache()
+                    # Final weights
+                    final_weights = 0.4 * pos_weights + 0.6 * length_weights
+                    final_weights = final_weights / final_weights.sum()
 
-        # Final GPU cleanup
+                    # Apply weights
+                    weighted_emb = np.zeros_like(chunk_embeddings[0])
+                    for j, emb in enumerate(chunk_embeddings):
+                        weighted_emb += emb * final_weights[j]
+
+                    # Normalize combined embedding
+                    weighted_emb_norm = weighted_emb / np.linalg.norm(weighted_emb)
+                    batch_embeddings.append(weighted_emb_norm)
+                elif len(chunk_embeddings) == 1:
+                    # Just one chunk
+                    batch_embeddings.append(chunk_embeddings[0])
+                else:
+                    # Fallback for empty chunks
+                    print("Warning: No chunk embeddings created, using fallback")
+                    inputs = tokenizer(" ", return_tensors="pt").to(device)
+
+                    with torch.no_grad():
+                        if isinstance(model, AutoModelForCausalLM):
+                            outputs = model(**inputs, output_hidden_states=True)
+                            embedding = (
+                                outputs.hidden_states[-1][0, -1, :].cpu().numpy()
+                            )
+                        else:
+                            outputs = model(**inputs)
+                            embedding = (
+                                outputs.last_hidden_state[:, 0, :].cpu().numpy()[0]
+                            )
+
+                    normalized_emb = embedding / np.linalg.norm(embedding)
+                    batch_embeddings.append(normalized_emb)
+
+            except Exception as e:
+                print(f"Error processing chunks: {e}")
+                # Fallback embedding (zeros)
+                if isinstance(model, AutoModelForCausalLM):
+                    embedding_dim = model.config.hidden_size
+                else:
+                    embedding_dim = model.config.hidden_size
+
+                fallback_emb = np.zeros(embedding_dim)
+                batch_embeddings.append(fallback_emb)
+
+        # Add batch embeddings to result
+        embeddings.extend(batch_embeddings)
+
+        # Clear GPU cache
         if device == "cuda":
             torch.cuda.empty_cache()
 
-        # Stack all embeddings
-        if not embeddings:
-            # Handle case where no embeddings were created
-            print("Warning: No embeddings were created, returning zeros")
-            if isinstance(model, AutoModelForCausalLM):
-                embedding_dim = model.config.hidden_size
+    # Final GPU cleanup
+    if device == "cuda":
+        torch.cuda.empty_cache()
+
+    # Stack all embeddings
+    if not embeddings:
+        # Handle case where no embeddings were created
+        print("Warning: No embeddings were created, returning zeros")
+        if isinstance(model, AutoModelForCausalLM):
+            embedding_dim = model.config.hidden_size
+        else:
+            embedding_dim = model.config.hidden_size
+        return np.zeros((1, embedding_dim))
+
+    return np.vstack(embeddings)
+
+
+def load_precomputed_llama_embeddings(samples_list, embeddings_dir="features/llama_embeddings", metadata_file="embedding_metadata.json"):
+    """
+    Load pre-computed LLaMA embeddings from disk.
+    
+    Args:
+        samples_list: List of DataFrames containing samples (train, val, test)
+        embeddings_dir: Directory containing pre-computed embeddings
+        metadata_file: Filename of metadata JSON in embeddings_dir
+    
+    Returns:
+        tuple: (embeddings_list, metadata, sample_ids_with_embeddings, sample_ids_without_embeddings)
+            embeddings_list: List of numpy arrays containing embeddings for each samples list
+            metadata: Dictionary with embedding information
+            sample_ids_with_embeddings: List of sample IDs that had pre-computed embeddings
+            sample_ids_without_embeddings: List of sample IDs that did not have pre-computed embeddings
+    """
+    print(f"Loading pre-computed LLaMA embeddings from {embeddings_dir}...")
+    embeddings_path = Path(embeddings_dir)
+    metadata_path = embeddings_path / metadata_file
+    
+    # Load metadata if available
+    metadata = None
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+            print(f"Loaded embedding metadata. Model: {metadata.get('model_name', 'unknown')}, "
+                  f"Dimension: {metadata.get('embedding_dim', 'unknown')}")
+        except Exception as e:
+            print(f"Warning: Could not load embedding metadata: {e}")
+    
+    # Get all available embedding files
+    available_embeddings = {
+        Path(path).stem: path 
+        for path in glob.glob(str(embeddings_path / "*.npy"))
+    }
+    
+    print(f"Found {len(available_embeddings)} pre-computed embeddings")
+    
+    # Process each samples list (train, val, test)
+    all_embeddings = []
+    all_sample_ids_with_embeddings = []
+    all_sample_ids_without_embeddings = []
+    
+    for samples in samples_list:
+        # Extract file IDs from filenames in the dataset
+        sample_ids = []
+        for _, sample in samples.iterrows():
+            text = sample["tpcm_text"]
+            file_id = None
+            
+            # Method 1: Try to find file ID in file content
+            # Start with the first 10 lines where metadata/comments usually appear
+            for line in text.split("\n")[:10]:
+                # Look for patterns like "model_X" or "generated__ABCDE"
+                for pattern in ["model_", "generated__"]:
+                    if pattern in line:
+                        # Extract ID that starts with the pattern and is followed by alphanumerics
+                        match = re.search(f"({pattern}[A-Za-z0-9_]+)", line)
+                        if match:
+                            file_id = match.group(1)
+                            break
+                if file_id:
+                    break
+            
+            # If no ID found in first 10 lines, scan the entire text
+            if not file_id:
+                for line in text.split("\n"):
+                    line = line.strip()
+                    if line:
+                        # Try to match common patterns in DSL files
+                        match = re.search(r"(model_[A-Za-z0-9_]+|generated__[A-Za-z0-9_]+)", line)
+                        if match:
+                            file_id = match.group(1)
+                            break
+            
+            # Method 2: If index is available, try to match with filename pattern directly
+            if not file_id and "filename" in sample:
+                filename = sample["filename"]
+                if filename:
+                    # Extract base name without extension
+                    base_name = os.path.splitext(os.path.basename(filename))[0]
+                    # Check if it matches our expected patterns
+                    if base_name.startswith("model_") or base_name.startswith("generated__"):
+                        file_id = base_name
+            
+            # Method 3: Try matching any available embedding by content length
+            # This is a last resort fallback for when we can't identify the file
+            if not file_id:
+                # Get text length as a fingerprint
+                text_fingerprint = len(text.strip())
+                # Use a numerical identifier based on row index + text length
+                file_id = f"unknown_len_{text_fingerprint}_idx_{_}"
+            
+            sample_ids.append(file_id)
+        
+        # Find which samples have pre-computed embeddings
+        sample_ids_with_embeddings = []
+        sample_indices_with_embeddings = []
+        sample_ids_without_embeddings = []
+        sample_indices_without_embeddings = []
+        
+        for i, sample_id in enumerate(sample_ids):
+            if sample_id and sample_id in available_embeddings:
+                sample_ids_with_embeddings.append(sample_id)
+                sample_indices_with_embeddings.append(i)
             else:
-                embedding_dim = model.config.hidden_size
-            return np.zeros((1, embedding_dim))
-
-        return np.vstack(embeddings)
-
-    # Process datasets
-    print(f"Processing training set ({len(train_samples)} samples)...")
-    X_train = encode_with_llama(train_samples)
-    y_train = extract_targets(train_samples)
-
-    print(f"Processing validation set ({len(val_samples)} samples)...")
-    X_val = encode_with_llama(val_samples)
-    y_val = extract_targets(val_samples)
-
-    print(f"Processing test set ({len(test_samples)} samples)...")
-    X_test = encode_with_llama(test_samples)
-    y_test = extract_targets(test_samples)
-
-    print("Feature extraction complete!")
-    print(f"Features shape: X_train={X_train.shape}, y_train={y_train.shape}")
-    print(f"X_val={X_val.shape}, X_test={X_test.shape}")
-
-    return X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model
+                if sample_id:
+                    sample_ids_without_embeddings.append(sample_id)
+                else:
+                    sample_ids_without_embeddings.append(f"unknown_at_index_{i}")
+                sample_indices_without_embeddings.append(i)
+        
+        # Store globally
+        all_sample_ids_with_embeddings.extend(sample_ids_with_embeddings)
+        all_sample_ids_without_embeddings.extend(sample_ids_without_embeddings)
+        
+        # Load embeddings for samples that have them
+        embeddings = None
+        if sample_indices_with_embeddings:
+            # Determine embedding dimension from metadata or first file
+            embedding_dim = metadata.get('embedding_dim', 4096) if metadata else 4096
+            # Pre-allocate array for all samples
+            embeddings = np.zeros((len(samples), embedding_dim))
+            
+            # Load each embedding
+            for sample_id, idx in zip(sample_ids_with_embeddings, sample_indices_with_embeddings):
+                embedding_path = available_embeddings[sample_id]
+                try:
+                    embedding = np.load(embedding_path)
+                    embeddings[idx] = embedding
+                except Exception as e:
+                    print(f"Error loading embedding for {sample_id}: {e}")
+                    # Mark as not having an embedding
+                    sample_indices_with_embeddings.remove(idx)
+                    sample_indices_without_embeddings.append(idx)
+                    sample_ids_with_embeddings.remove(sample_id)
+                    sample_ids_without_embeddings.append(sample_id)
+        
+        all_embeddings.append((embeddings, sample_indices_with_embeddings, sample_indices_without_embeddings))
+    
+    coverage = len(all_sample_ids_with_embeddings) / sum(len(s) for s in samples_list) * 100
+    print(f"Pre-computed embeddings coverage: {coverage:.2f}% ({len(all_sample_ids_with_embeddings)} out of {sum(len(s) for s in samples_list)} samples)")
+    
+    return all_embeddings, metadata, all_sample_ids_with_embeddings, all_sample_ids_without_embeddings
 
 
 def build_bert_features(

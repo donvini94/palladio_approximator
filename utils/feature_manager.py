@@ -12,6 +12,7 @@ from feature_extraction import (
     build_tfidf_features,
     build_bert_features,
     build_llama_features,
+    extract_features as feature_extraction_func  # Import the actual extraction function
 )
 
 
@@ -99,84 +100,9 @@ def extract_features(args, device):
     Returns:
         tuple: (X_train, y_train, X_val, y_val, X_test, y_test, embedding_model)
     """
-    if args.prediction_mode != "summary":
-        raise ValueError("Unsupported prediction mode. Choose 'summary'")
-    
-    print("Loading dataset...")
-    train_samples, val_samples, test_samples = load_dataset(args.data_dir)
-    print(f"Dataset loaded. Train samples: {len(train_samples)}")
-
-    # Feature extraction
-    print(f"Building features using {args.embedding} embedding...")
-    
-    if args.embedding == "tfidf":
-        # Configure parameters based on model type
-        if args.model == "torch":
-            # No limit on max features to capture all important terms
-            max_features = None
-            # Keep more components for better representation quality
-            n_components = 2000
-            # Only apply SVD if it maintains high explained variance
-            apply_truncated_svd = True
-            print(f"Using high-quality parameters for torch: max_features={max_features}, n_components={n_components}")
-        else:
-            max_features = 10000
-            n_components = 1000
-            apply_truncated_svd = True
-
-        X_train, y_train, X_val, y_val, X_test, y_test, embedding_model = build_tfidf_features(
-            train_samples,
-            val_samples,
-            test_samples,
-            max_features=max_features,
-            apply_truncated_svd=apply_truncated_svd,
-            n_components=n_components,
-        )
-        
-    elif args.embedding == "bert":
-        print(f"Using device: {device}")
-        X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model = build_bert_features(
-            train_samples, val_samples, test_samples, device=device
-        )
-        embedding_model = (tokenizer, model)
-        
-    elif args.embedding == "llama":
-        device = "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
-        if device != "cuda":
-            print("WARNING: Llama models require CUDA. Forcing CUDA if available.")
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        print(f"Using device: {device}")
-
-        # Get model name based on size parameter
-        model_name = args.llama_model if args.llama_model else "codellama/CodeLlama-7b-hf"
-        
-        X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model = build_llama_features(
-            train_samples,
-            val_samples,
-            test_samples,
-            model_name=model_name,
-            device=device,
-            batch_size=args.llama_batch_size,
-            use_half_precision=not args.no_half_precision,
-            use_8bit=args.use_8bit_llama,
-            use_4bit=args.use_4bit_llama,
-            memory_efficient=True,
-        )
-        embedding_model = (tokenizer, model)
-
-        print("Feature extraction completed successfully")
-        print(f"Feature shapes: X_train={X_train.shape}, y_train={y_train.shape}")
-
-        # Free up memory
-        if device == "cuda":
-            print("Clearing GPU cache...")
-            torch.cuda.empty_cache()
-            
-    else:
-        raise ValueError("Unsupported embedding type. Choose 'tfidf', 'bert', or 'llama'")
-        
-    return X_train, y_train, X_val, y_val, X_test, y_test, embedding_model
+    # Use the imported function from feature_extraction.py
+    # This ensures we're using the latest implementation that supports pre-computed embeddings
+    return feature_extraction_func(args, device)
 
 
 def get_features(args):

@@ -12,3 +12,4 @@ torch
 accelerate
 shap
 psutil
+bitsandbytes

@@ -11,6 +11,7 @@ This project predicts system performance metrics (avg/min/max response time) fro
   - `TF-IDF`
   - `BERT (bert-base-uncased)`
   - `LLaMA` (Code-LLaMA 7B)
+    - Supports pre-computed embeddings to avoid GPU memory issues
 - 🧠 Model types:
   - `Random Forest`
   - `Ridge` / `Lasso` Regression
@@ -29,7 +30,10 @@ palladio_approximator/
 │   ├── dsl_models/         # .tpcm files (DSL)
 │   └── measurements/       # .csv files (Response Time [s])
 ├── dataset.py              # Loads and preprocesses DSL + CSV
-├── feature_extraction.py   # TF-IDF + BERT embeddings
+├── feature_extraction.py   # TF-IDF, BERT, and LLaMA embeddings
+├── precompute_llama_embeddings.py  # Generate LLaMA embeddings efficiently
+├── features/
+│   └── llama_embeddings/   # Pre-computed LLaMA embeddings
 ├── models/
 │   ├── rf_model.py         # Random forest trainer
 │   ├── linear_model.py     # Ridge / Lasso trainer
@@ -110,6 +114,21 @@ python train.py --model rf --embedding tfidf
 python train.py --model rf --embedding tfidf --no_load_dataset --no_save_dataset
 ```
 
+### ➤ Using Pre-computed LLaMA Embeddings
+```bash
+# Step 1: Generate embeddings (only needed once)
+python precompute_llama_embeddings.py --input_dir data/dsl_models --output_dir features/llama_embeddings
+
+# Step 2: Train with pre-computed embeddings (enabled by default)
+python train.py --model rf --embedding llama
+
+# Disable pre-computed embeddings (generate on-the-fly)
+python train.py --model rf --embedding llama --no_precomputed_embeddings
+
+# Specify a different directory for pre-computed embeddings
+python train.py --model rf --embedding llama --precomputed_embeddings_dir my_custom_embeddings_dir
+```
+
 ### ➤ Using Docker
 ```bash
 ./run.sh train rf bert summary
@@ -123,6 +142,8 @@ python train.py --model rf --embedding tfidf --no_load_dataset --no_save_dataset
 - `data/all_samples.csv`: Preprocessed dataset
 - `data/cache/dataset_splits.pkl`: Cached dataset (if enabled)
 - `features/*.pkl`: Cached extracted features (if enabled)
+- `features/llama_embeddings/*.npy`: Pre-computed LLaMA embeddings (if generated)
+- `features/llama_embeddings/embedding_metadata.json`: Metadata for pre-computed embeddings
 
 ---
 
