@@ -349,9 +349,16 @@ def train_torch_regressor(
     metrics_history = {
         "train_loss": [],
         "val_loss": [],
+        "train_mse": [],
+        "train_mae": [],
         "val_mse": [],
         "val_mae": [],
         "learning_rate": []
+    }
+    
+    # Add batch-level tracking
+    batch_history = {
+        "train_loss_batches": []
     }
     
     # Initialize best metrics tracking
@@ -422,8 +429,13 @@ def train_torch_regressor(
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     optimizer.step()
                 
-                train_loss += loss.item()
+                # Store batch loss for both running total and batch history
+                loss_val = loss.item()
+                train_loss += loss_val
                 train_batches += 1
+                
+                # Store batch loss for finer-grained tracking
+                batch_history["train_loss_batches"].append(loss_val)
                 
                 # Clear GPU memory periodically
                 if train_batches % 10 == 0 and device == "cuda":
@@ -463,8 +475,13 @@ def train_torch_regressor(
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     optimizer.step()
                 
-                train_loss += loss.item()
+                # Store batch loss for both running total and batch history
+                loss_val = loss.item()
+                train_loss += loss_val
                 train_batches += 1
+                
+                # Store batch loss for finer-grained tracking
+                batch_history["train_loss_batches"].append(loss_val)
         
         # Calculate average training loss
         train_loss /= train_batches if train_batches > 0 else 1
@@ -538,9 +555,12 @@ def train_torch_regressor(
         # Calculate additional metrics
         model.eval()
         with torch.no_grad():
-            # Calculate MSE on validation set
+            # Calculate MSE and MAE on validation set
             val_mse = 0.0
             val_mae = 0.0
+            train_mse = 0.0
+            train_mae = 0.0
+            
             # Calculate metrics on a validation subset to save time
             if is_sparse:
                 # Use a subset of val_indices to save time
@@ -552,6 +572,16 @@ def train_torch_regressor(
                     outputs = outputs.squeeze()
                 val_mse = mse_criterion(outputs, y_val_subset).item()
                 val_mae = l1_criterion(outputs, y_val_subset).item()
+                
+                # Also calculate training metrics on a subset
+                train_subset_size = min(1000, len(train_indices))
+                train_subset_indices = train_indices[:train_subset_size]
+                X_train_subset, y_train_subset = get_batch(train_subset_indices, X_train, y_train_tensor)
+                train_outputs = model(X_train_subset)
+                if output_dim == 1:
+                    train_outputs = train_outputs.squeeze()
+                train_mse = mse_criterion(train_outputs, y_train_subset).item()
+                train_mae = l1_criterion(train_outputs, y_train_subset).item()
             else:
                 # Try to use a full validation batch
                 for X_batch, y_batch in [next(iter(val_loader))]:
@@ -562,12 +592,24 @@ def train_torch_regressor(
                     val_mse = mse_criterion(outputs, y_batch).item()
                     val_mae = l1_criterion(outputs, y_batch).item()
                     break  # Just use one batch
+                
+                # Calculate training metrics on one batch
+                for X_batch, y_batch in [next(iter(train_loader))]:
+                    X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+                    outputs = model(X_batch)
+                    if output_dim == 1:
+                        outputs = outputs.squeeze()
+                    train_mse = mse_criterion(outputs, y_batch).item()
+                    train_mae = l1_criterion(outputs, y_batch).item()
+                    break  # Just use one batch
         
         # Store metrics for history
         metrics_history["train_loss"].append(train_loss)
         metrics_history["val_loss"].append(val_loss)
         metrics_history["val_mse"].append(val_mse)
         metrics_history["val_mae"].append(val_mae)
+        metrics_history["train_mse"].append(train_mse)
+        metrics_history["train_mae"].append(train_mae)
         metrics_history["learning_rate"].append(current_lr)
         
         # Early stopping check
@@ -615,10 +657,13 @@ def train_torch_regressor(
     # Add training metadata to the wrapped model
     wrapped_model.training_metrics = {
         "history": metrics_history,
+        "batch_history": batch_history,
         "best_metrics": best_metrics,
         "training_time_seconds": elapsed_time,
         "final_val_loss": best_val_loss,
+        "final_train_loss": train_loss,
         "total_epochs": epoch + 1,
+        "total_steps": train_batches * (epoch + 1),  # Total number of batch updates
         "input_dim": input_dim,
         "output_dim": output_dim,
         "hidden_dims": hidden_dims,

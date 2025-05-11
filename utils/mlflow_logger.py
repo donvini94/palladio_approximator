@@ -96,8 +96,8 @@ def log_torch_model_metrics(model):
     """
     # Import mlflow again to avoid scoping issues
     import mlflow
-    import mlflow.sklearn
     import mlflow.pytorch
+    import numpy as np
     
     if not hasattr(model, "training_metrics"):
         print("Warning: PyTorch model doesn't have training_metrics attribute")
@@ -105,61 +105,83 @@ def log_torch_model_metrics(model):
         
     # Log additional parameters (not already logged)
     additional_params = {
-        "input_dim": model.training_metrics["input_dim"],
-        "output_dim": model.training_metrics["output_dim"],
-        "hidden_dims": str(model.training_metrics["hidden_dims"]),
-        "learning_rate": model.training_metrics["learning_rate"],
-        "optimizer": model.training_metrics["optimizer"],
-        "early_stopping": model.training_metrics["early_stopping"],
+        "input_dim": model.training_metrics.get("input_dim", 0),
+        "output_dim": model.training_metrics.get("output_dim", 0),
+        "hidden_dims": str(model.training_metrics.get("hidden_dims", [])),
+        "learning_rate": model.training_metrics.get("learning_rate", 0),
+        "optimizer": model.training_metrics.get("optimizer", "unknown"),
+        "early_stopping": model.training_metrics.get("early_stopping", 0),
+        "total_epochs": model.training_metrics.get("total_epochs", 0),
+        "total_steps": model.training_metrics.get("total_steps", 0),
     }
     mlflow.log_params(additional_params)
 
     # Log per-epoch metrics
-    history = model.training_metrics["history"]
-    for epoch in range(len(history["train_loss"])):
-        mlflow.log_metrics(
-            {
-                "epoch": epoch + 1,
-                "train_loss": history["train_loss"][epoch],
-                "val_loss": history["val_loss"][epoch],
-                "val_mse": history["val_mse"][epoch],
-                "val_mae": history["val_mae"][epoch],
-                "learning_rate": history["learning_rate"][epoch],
-            },
-            step=epoch,
-        )
+    history = model.training_metrics.get("history", {})
+    for epoch in range(len(history.get("train_loss", []))):
+        epoch_metrics = {
+            "epoch": epoch + 1,
+        }
+        
+        # Add all available metrics for this epoch
+        for metric_name in ["train_loss", "val_loss", "train_mse", "val_mse", 
+                           "train_mae", "val_mae", "learning_rate"]:
+            if metric_name in history and epoch < len(history[metric_name]):
+                epoch_metrics[metric_name] = history[metric_name][epoch]
+        
+        # Log with epoch as the step
+        mlflow.log_metrics(epoch_metrics, step=epoch)
+    
+    # Log batch-level metrics if available
+    batch_history = model.training_metrics.get("batch_history", {})
+    if batch_history and "train_loss_batches" in batch_history:
+        # Log selected batches for visualization (avoid logging every batch)
+        batch_losses = batch_history["train_loss_batches"]
+        total_batches = len(batch_losses)
+        
+        # Log at most 100 evenly spaced batches to avoid overwhelming MLflow
+        if total_batches > 100:
+            indices = np.linspace(0, total_batches-1, 100, dtype=int)
+            for i, batch_idx in enumerate(indices):
+                mlflow.log_metric("batch_train_loss", batch_losses[batch_idx], step=batch_idx)
+        else:
+            for batch_idx, loss in enumerate(batch_losses):
+                mlflow.log_metric("batch_train_loss", loss, step=batch_idx)
 
     # Log best metrics with explicit best_ prefix to avoid conflicts
     best_metrics = {
         f"best_{k}": v
-        for k, v in model.training_metrics["best_metrics"].items()
+        for k, v in model.training_metrics.get("best_metrics", {}).items()
     }
     mlflow.log_metrics(best_metrics)
 
     # Log final metrics
-    mlflow.log_metrics(
-        {
-            "training_time_seconds": model.training_metrics["training_time_seconds"],
-            "final_val_loss": model.training_metrics["final_val_loss"],
-            "total_epochs": model.training_metrics["total_epochs"],
-        }
-    )
+    final_metrics = {
+        "training_time_seconds": model.training_metrics.get("training_time_seconds", 0),
+        "final_val_loss": model.training_metrics.get("final_val_loss", 0),
+        "final_train_loss": model.training_metrics.get("final_train_loss", 0),
+    }
+    mlflow.log_metrics(final_metrics)
 
-    # Log the PyTorch model file
+    # Standardize model logging - prefer using mlflow's native PyTorch support
     try:
-        model_path = model.training_metrics.get("model_path")
-        if model_path and os.path.exists(model_path):
-            mlflow.log_artifact(model_path)
-
-        # Try to log PyTorch model directly if it's available
         if "pytorch_model" in model.training_metrics:
+            pytorch_model = model.training_metrics["pytorch_model"]
             try:
-                pytorch_model = model.training_metrics["pytorch_model"]
+                # Use native PyTorch model logging with proper error handling
                 mlflow.pytorch.log_model(pytorch_model, "pytorch_model")
+                
+                # No need to log the saved file separately
+                # The model is already saved as an MLflow artifact
             except Exception as e:
-                print(f"Warning: Could not log PyTorch model directly: {e}")
+                # Provide more detailed error message
+                mlflow.log_param("model_logging_error", str(e))
+                print(f"Error logging PyTorch model: {str(e)}")
+                print("This could be due to dependencies not being properly captured.")
     except Exception as e:
-        print(f"Warning: Could not log model file: {e}")
+        # Log the error as a parameter for visibility
+        mlflow.log_param("model_processing_error", str(e))
+        print(f"Error processing PyTorch model for logging: {str(e)}")
 
 
 def log_evaluation_results(val_results, test_results, model=None, model_path=None):

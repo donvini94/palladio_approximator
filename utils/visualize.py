@@ -674,7 +674,7 @@ def visualize_training_metrics(
 
     if metric_names is None:
         # Default metrics to visualize
-        metric_names = ["train_loss", "val_loss", "val_mse", "val_mae", "learning_rate"]
+        metric_names = ["train_loss", "val_loss", "train_mse", "val_mse", "train_mae", "val_mae", "learning_rate"]
 
     # Connect to MLflow
     client = mlflow.tracking.MlflowClient()
@@ -769,7 +769,7 @@ def visualize_training_metrics(
         plt.close()
 
     # Also create a combined plot for loss metrics
-    loss_metrics = [m for m in metrics_data.keys() if "loss" in m.lower()]
+    loss_metrics = [m for m in metrics_data.keys() if "loss" in m.lower() and not m.startswith("batch_")]
     if loss_metrics:
         plt.figure(figsize=(12, 6))
 
@@ -790,6 +790,30 @@ def visualize_training_metrics(
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
         plt.savefig(os.path.join(output_dir, "combined_loss_history.png"), dpi=300)
+        plt.close()
+    
+    # Create batch-level plot if available
+    batch_metrics = client.get_metric_history(run_id, "batch_train_loss")
+    if batch_metrics:
+        plt.figure(figsize=(12, 6))
+        
+        # Extract batch indices and values
+        batch_indices = [m.step for m in batch_metrics]
+        batch_values = [m.value for m in batch_metrics]
+        
+        plt.plot(batch_indices, batch_values, alpha=0.7, linewidth=1)
+        
+        # Format title and labels
+        plt.title("Training Loss at Batch Level")
+        plt.xlabel("Batch")
+        plt.ylabel("Loss")
+        
+        # Add grid for readability
+        plt.grid(True, alpha=0.3)
+        
+        # Save figure
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, "batch_loss_history.png"), dpi=300)
         plt.close()
 
     # Create a DataFrame with all metrics for easier analysis
