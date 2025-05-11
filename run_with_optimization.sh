@@ -10,7 +10,7 @@ YELLOW='\033[0;33m'
 NC='\033[0m' # No Color
 
 # Ensure we're in the right directory
-cd "$(dirname "$0")"
+cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # Function to print section header
 print_header() {
