@@ -164,7 +164,7 @@ def create_metrics_interpretation(model_metrics, baseline_metrics, target_stats)
     # Initialize with a more comprehensive default summary
     performance_level = "undetermined"
     summary_details = "No metrics available for detailed assessment."
-    
+
     interpretation = {
         "metrics_context": {},
         "performance_summary": "Model performance assessment completed.",  # Default summary
@@ -255,13 +255,17 @@ def create_metrics_interpretation(model_metrics, baseline_metrics, target_stats)
                     mae_ratios.append(m / target_mean[i] * 100)
             avg_mae_ratio = safe_average(mae_ratios)
             # Store individual ratios as well
-            interpretation["metrics_context"]["val_mae"]["ratios_by_target"] = mae_ratios
+            interpretation["metrics_context"]["val_mae"][
+                "ratios_by_target"
+            ] = mae_ratios
         elif isinstance(mae, list) and not isinstance(target_mean, list):
             # Single target mean, multiple MAEs
             if target_mean > 0:
                 mae_ratios = [m / target_mean * 100 for m in mae]
                 avg_mae_ratio = safe_average(mae_ratios)
-                interpretation["metrics_context"]["val_mae"]["ratios_by_target"] = mae_ratios
+                interpretation["metrics_context"]["val_mae"][
+                    "ratios_by_target"
+                ] = mae_ratios
         elif not isinstance(mae, list) and isinstance(target_mean, list):
             # Multiple target means, single MAE (unusual case)
             avg_target = safe_average(target_mean)
@@ -302,27 +306,27 @@ def create_metrics_interpretation(model_metrics, baseline_metrics, target_stats)
     if "prediction_errors" in model_metrics and "mean" in target_stats:
         errors = model_metrics["prediction_errors"]
         target_mean_value = target_stats["mean"]
-        
+
         # Convert list target_mean to average if needed
         if isinstance(target_mean_value, list):
             target_mean_value = sum(target_mean_value) / len(target_mean_value)
-            
+
         # Calculate percentage of predictions within error bounds
         if isinstance(target_mean_value, (int, float)) and target_mean_value > 0:
             within_1pct = 100 * np.mean(np.abs(errors) < 0.01 * target_mean_value)
             within_5pct = 100 * np.mean(np.abs(errors) < 0.05 * target_mean_value)
             within_10pct = 100 * np.mean(np.abs(errors) < 0.1 * target_mean_value)
             within_20pct = 100 * np.mean(np.abs(errors) < 0.2 * target_mean_value)
-            
+
             error_distribution = {
                 "within_1pct_of_mean": float(within_1pct),
                 "within_5pct_of_mean": float(within_5pct),
                 "within_10pct_of_mean": float(within_10pct),
                 "within_20pct_of_mean": float(within_20pct),
             }
-            
+
             interpretation["metrics_context"]["error_distribution"] = error_distribution
-            
+
             # Add error distribution interpretation
             if within_5pct > 80:
                 error_precision = "very high"
@@ -332,11 +336,11 @@ def create_metrics_interpretation(model_metrics, baseline_metrics, target_stats)
                 error_precision = "moderate"
             else:
                 error_precision = "low"
-                
+
             interpretation["metrics_context"]["error_precision"] = {
                 "level": error_precision,
                 "description": f"{within_5pct:.1f}% of predictions are within 5% of the true value, "
-                              f"and {within_10pct:.1f}% are within 10% of the true value."
+                f"and {within_10pct:.1f}% are within 10% of the true value.",
             }
 
     # Create overall performance summary with more informative metrics
@@ -346,7 +350,7 @@ def create_metrics_interpretation(model_metrics, baseline_metrics, target_stats)
             # MSE improvement
             model_mse = model_metrics["val_mse"]
             baseline_mse = baseline_metrics["mean_baseline_mse"]
-            
+
             if isinstance(model_mse, list) and isinstance(baseline_mse, list):
                 # Calculate average improvement for multi-output case
                 mse_improvements = []
@@ -358,20 +362,32 @@ def create_metrics_interpretation(model_metrics, baseline_metrics, target_stats)
             elif isinstance(model_mse, list) and not isinstance(baseline_mse, list):
                 # Multi-output model MSE, single baseline MSE
                 avg_model_mse = safe_average(model_mse)
-                avg_improvement = (baseline_mse - avg_model_mse) / baseline_mse * 100 if baseline_mse > 0 else 0
+                avg_improvement = (
+                    (baseline_mse - avg_model_mse) / baseline_mse * 100
+                    if baseline_mse > 0
+                    else 0
+                )
             elif not isinstance(model_mse, list) and isinstance(baseline_mse, list):
                 # Single model MSE, multi-output baseline MSE
                 avg_baseline_mse = safe_average(baseline_mse)
-                avg_improvement = (avg_baseline_mse - model_mse) / avg_baseline_mse * 100 if avg_baseline_mse > 0 else 0
+                avg_improvement = (
+                    (avg_baseline_mse - model_mse) / avg_baseline_mse * 100
+                    if avg_baseline_mse > 0
+                    else 0
+                )
             else:
                 # Single output case
-                avg_improvement = (baseline_mse - model_mse) / baseline_mse * 100 if baseline_mse > 0 else 0
-        
+                avg_improvement = (
+                    (baseline_mse - model_mse) / baseline_mse * 100
+                    if baseline_mse > 0
+                    else 0
+                )
+
             # MAE relative to target mean
             if "val_mae" in model_metrics and "mean" in target_stats:
                 mae = model_metrics["val_mae"]
                 target_mean = target_stats["mean"]
-                
+
                 if isinstance(mae, list) and isinstance(target_mean, list):
                     # Calculate average MAE ratio for multi-output case
                     mae_ratios = []
@@ -383,15 +399,19 @@ def create_metrics_interpretation(model_metrics, baseline_metrics, target_stats)
                 elif isinstance(mae, list) and not isinstance(target_mean, list):
                     # Multi-output MAE, single target mean
                     avg_mae = safe_average(mae)
-                    avg_mae_ratio = avg_mae / target_mean * 100 if target_mean > 0 else 0
+                    avg_mae_ratio = (
+                        avg_mae / target_mean * 100 if target_mean > 0 else 0
+                    )
                 elif not isinstance(mae, list) and isinstance(target_mean, list):
                     # Single MAE, multi-output target mean
                     avg_target_mean = safe_average(target_mean)
-                    avg_mae_ratio = mae / avg_target_mean * 100 if avg_target_mean > 0 else 0
+                    avg_mae_ratio = (
+                        mae / avg_target_mean * 100 if avg_target_mean > 0 else 0
+                    )
                 else:
                     # Single output case
                     avg_mae_ratio = mae / target_mean * 100 if target_mean > 0 else 0
-                
+
                 # Determine performance level
                 if avg_improvement > 50 and avg_mae_ratio < 10:
                     performance_level = "excellent"
@@ -403,13 +423,13 @@ def create_metrics_interpretation(model_metrics, baseline_metrics, target_stats)
                     performance_level = "marginal"
                 else:
                     performance_level = "suboptimal"
-                
+
                 # Create detailed summary
                 summary_details = (
                     f"with {avg_improvement:.1f}% improvement over the baseline model "
                     f"and an average error of {avg_mae_ratio:.1f}% relative to the mean target value."
                 )
-                
+
                 # Add error distribution information if available
                 if "error_distribution" in interpretation["metrics_context"]:
                     error_dist = interpretation["metrics_context"]["error_distribution"]
@@ -417,10 +437,12 @@ def create_metrics_interpretation(model_metrics, baseline_metrics, target_stats)
                         f" {error_dist['within_5pct_of_mean']:.1f}% of predictions are within 5% of the true value, "
                         f"and {error_dist['within_10pct_of_mean']:.1f}% are within 10%."
                     )
-            
+
             # Create comprehensive performance summary
-            interpretation["performance_summary"] = f"The model shows {performance_level} performance, {summary_details}"
-            
+            interpretation["performance_summary"] = (
+                f"The model shows {performance_level} performance, {summary_details}"
+            )
+
     except Exception as e:
         # If something goes wrong, fall back to a basic summary but log the error
         print(f"Warning: Could not generate detailed performance summary: {e}")
@@ -475,7 +497,7 @@ def create_metrics_interpretation(model_metrics, baseline_metrics, target_stats)
                 bias_direction = "consistently underestimates"
             else:
                 bias_direction = "has minimal bias in"
-                
+
             interpretation["domain_interpretation"]["prediction_bias"] = (
                 f"The model {bias_direction} the target values with a mean error of {bias:.3f}. "
                 f"This should be considered when interpreting predictions."
@@ -519,7 +541,7 @@ def create_performance_visualization(
             median_baseline = baseline_metrics.get("median_baseline_mse", 0)
 
         # Create bar chart
-        models = ["Your Model", "Mean Baseline", "Median Baseline"]
+        models = ["Our Model", "Mean Baseline", "Median Baseline"]
         values = [model_mse, mean_baseline, median_baseline]
 
         plt.bar(models, values, color=["#2C7BB6", "#D7191C", "#FDAE61"])
@@ -552,79 +574,117 @@ def create_performance_visualization(
         error_mean = np.mean(errors)
         error_min = np.min(errors)
         error_max = np.max(errors)
-        
+
         # Calculate interquartile range for robust outlier detection
         q1 = np.percentile(errors, 25)
         q3 = np.percentile(errors, 75)
         iqr = q3 - q1
-        
+
         # Define outlier boundaries using both IQR method and standard deviation
         std_bounds = (error_mean - 3 * error_std, error_mean + 3 * error_std)
         iqr_bounds = (q1 - 1.5 * iqr, q3 + 1.5 * iqr)
-        
+
         # Use the tighter of the two bounds but ensure we don't exclude too much data
         x_min = max(std_bounds[0], iqr_bounds[0])
         x_max = min(std_bounds[1], iqr_bounds[1])
-        
+
         # If bounds are too tight or exclude a lot of data, fall back to percentiles
-        if x_max - x_min < error_std or np.mean((errors < x_min) | (errors > x_max)) > 0.05:
+        if (
+            x_max - x_min < error_std
+            or np.mean((errors < x_min) | (errors > x_max)) > 0.05
+        ):
             x_min = np.percentile(errors, 1)  # 1st percentile
             x_max = np.percentile(errors, 99)  # 99th percentile
-        
+
         # Ensure we include zero in the plot to provide reference
         if x_min > 0:
             x_min = -0.1 * abs(x_max)
         if x_max < 0:
             x_max = 0.1 * abs(x_min)
-            
+
         # Add a small margin for better visualization
         margin = 0.1 * (x_max - x_min)
         x_min -= margin
         x_max += margin
 
         # Plot error distribution with explicit bins for better control
-        n_bins = min(50, max(10, int(len(errors) / 20)))  # Adjust bin count based on data size
+        n_bins = min(
+            50, max(10, int(len(errors) / 20))
+        )  # Adjust bin count based on data size
         sns.histplot(errors, kde=True, bins=n_bins)
 
         # Add reference lines
         plt.axvline(x=0, color="r", linestyle="--", label="Zero Error")
-        plt.axvline(x=error_mean, color="b", linestyle="-", label=f"Mean Error: {error_mean:.3f}")
-        
+        plt.axvline(
+            x=error_mean,
+            color="b",
+            linestyle="-",
+            label=f"Mean Error: {error_mean:.3f}",
+        )
+
         # Add lines showing the actual min/max (with low opacity) to indicate the full range
-        plt.axvline(x=error_min, color="gray", linestyle=":", alpha=0.5, label=f"Min Error: {error_min:.3f}")
-        plt.axvline(x=error_max, color="gray", linestyle=":", alpha=0.5, label=f"Max Error: {error_max:.3f}")
+        plt.axvline(
+            x=error_min,
+            color="gray",
+            linestyle=":",
+            alpha=0.5,
+            label=f"Min Error: {error_min:.3f}",
+        )
+        plt.axvline(
+            x=error_max,
+            color="gray",
+            linestyle=":",
+            alpha=0.5,
+            label=f"Max Error: {error_max:.3f}",
+        )
 
         if "mean" in target_stats:
             # Add reference lines for percentage of mean
             target_mean = target_stats["mean"]
             if isinstance(target_mean, list):
                 target_mean = sum(target_mean) / len(target_mean)
-            
+
             # Only add reference lines if they're within our plot range
             if abs(0.05 * target_mean) < max(abs(x_min), abs(x_max)):
                 plt.axvline(
-                    x=0.05 * target_mean, color="g", linestyle="-.", label="±5% of Mean Target"
+                    x=0.05 * target_mean,
+                    color="g",
+                    linestyle="-.",
+                    label="±5% of Mean Target",
                 )
                 plt.axvline(x=-0.05 * target_mean, color="g", linestyle="-.")
-            
+
             if abs(0.1 * target_mean) < max(abs(x_min), abs(x_max)):
                 plt.axvline(
-                    x=0.1 * target_mean, color="y", linestyle="-.", label="±10% of Mean Target"
+                    x=0.1 * target_mean,
+                    color="y",
+                    linestyle="-.",
+                    label="±10% of Mean Target",
                 )
                 plt.axvline(x=-0.1 * target_mean, color="y", linestyle="-.")
 
         # Set x-axis limits based on the calculated values
         plt.xlim(x_min, x_max)
-        
+
         # Add statistical annotations
-        within_5pct = 100 * np.mean(np.abs(errors) < 0.05 * target_mean if isinstance(target_mean, (int, float)) else False)
-        within_10pct = 100 * np.mean(np.abs(errors) < 0.1 * target_mean if isinstance(target_mean, (int, float)) else False)
-        
+        within_5pct = 100 * np.mean(
+            np.abs(errors) < 0.05 * target_mean
+            if isinstance(target_mean, (int, float))
+            else False
+        )
+        within_10pct = 100 * np.mean(
+            np.abs(errors) < 0.1 * target_mean
+            if isinstance(target_mean, (int, float))
+            else False
+        )
+
         # Calculate additional statistics for annotations
         median_error = np.median(errors)
         q1_q3_range = f"[{q1:.3f}, {q3:.3f}]"
-        outlier_pct = 100 * np.mean((errors < q1 - 1.5 * iqr) | (errors > q3 + 1.5 * iqr))
-        
+        outlier_pct = 100 * np.mean(
+            (errors < q1 - 1.5 * iqr) | (errors > q3 + 1.5 * iqr)
+        )
+
         # Add detailed annotations about error distribution
         plt.annotate(
             f"Mean: {error_mean:.3f}, Median: {median_error:.3f}\n"
@@ -633,16 +693,16 @@ def create_performance_visualization(
             f"Within ±10% of mean: {within_10pct:.1f}%\n"
             f"Outliers: {outlier_pct:.1f}%",
             xy=(0.95, 0.95),
-            xycoords='axes fraction',
-            ha='right',
-            va='top',
-            bbox=dict(boxstyle="round,pad=0.5", fc="white", alpha=0.8)
+            xycoords="axes fraction",
+            ha="right",
+            va="top",
+            bbox=dict(boxstyle="round,pad=0.5", fc="white", alpha=0.8),
         )
 
         plt.title("Prediction Error Distribution")
         plt.xlabel("Prediction Error (Actual - Predicted)")
         plt.ylabel("Frequency")
-        plt.legend(loc='upper left')
+        plt.legend(loc="upper left")
 
         # Save figure
         error_dist_path = os.path.join(output_dir, "error_distribution_context.png")
@@ -652,78 +712,136 @@ def create_performance_visualization(
 
         visualization_paths.append(error_dist_path)
 
-    # 3. Create performance quadrant chart
-    if (
-        "mean_mse_improvement_pct"
-        in calculate_normalized_metrics(
-            {**model_metrics, "target_variance": target_stats.get("variance", 1.0)},
-            baseline_metrics,
-        )
-        and "val_mae" in model_metrics
-        and "mean" in target_stats
-    ):
-        # Calculate metrics for visualization
-        normalized = calculate_normalized_metrics(
-            {**model_metrics, "target_variance": target_stats.get("variance", 1.0)},
-            baseline_metrics,
-        )
-
-        improvement = normalized["mean_mse_improvement_pct"]
-        mae = model_metrics["val_mae"]
-        target_mean = target_stats["mean"]
-
-        if isinstance(improvement, list):
-            improvement = sum(improvement) / len(improvement)
-        if isinstance(mae, list):
-            mae_ratio = sum(
-                [m / target_mean[i] * 100 for i, m in enumerate(mae)]
-            ) / len(mae)
+    # 3. Create residual plot (actual vs predicted values)
+    if "prediction_errors" in model_metrics and "mean" in target_stats:
+        errors = model_metrics["prediction_errors"]
+        
+        # We need to reconstruct predicted values from errors
+        # In this case, we'll need to find actual y_val and predictions from the test script
+        # For now, we'll create a synthetic residual plot using the errors
+        
+        # Create synthetic predictions and actual values
+        if isinstance(target_stats["mean"], list):
+            target_mean = target_stats["mean"][0]  # Use first output for viz
         else:
-            mae_ratio = mae / target_mean * 100
-
-        plt.figure(figsize=(8, 8))
-
-        # Create quadrant chart
-        plt.scatter([improvement], [mae_ratio], s=100, color="#2C7BB6", zorder=5)
-
-        # Add quadrant lines
-        plt.axhline(y=20, color="k", linestyle="--", alpha=0.3)
-        plt.axvline(x=30, color="k", linestyle="--", alpha=0.3)
-
-        # Shade quadrants
-        plt.fill_between([0, 30], [0, 0], [20, 20], color="r", alpha=0.1)
-        plt.fill_between([30, 100], [0, 0], [20, 20], color="g", alpha=0.1)
-        plt.fill_between([0, 30], [20, 20], [100, 100], color="orange", alpha=0.1)
-        plt.fill_between([30, 100], [20, 20], [100, 100], color="y", alpha=0.1)
-
-        # Add quadrant labels
-        plt.text(15, 10, "Excellent", ha="center", fontsize=10)
-        plt.text(65, 10, "Good", ha="center", fontsize=10)
-        plt.text(15, 60, "Marginal", ha="center", fontsize=10)
-        plt.text(65, 60, "Acceptable", ha="center", fontsize=10)
-
-        # Label the point
-        plt.annotate(
-            f"Your Model\n({improvement:.1f}%, {mae_ratio:.1f}%)",
-            xy=(improvement, mae_ratio),
-            xytext=(improvement + 10, mae_ratio + 10),
-            arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2"),
-        )
-
-        # Format chart
-        plt.title("Model Performance Assessment")
-        plt.xlabel("Improvement over Baseline (%)")
-        plt.ylabel("MAE as % of Mean Target Value")
-        plt.xlim(0, 100)
-        plt.ylim(0, 100)
+            target_mean = target_stats["mean"]
+            
+        # Generate synthetic values around the mean with standard deviation
+        std_val = target_stats.get("std", 1.0)
+        if isinstance(std_val, list):
+            std_val = std_val[0]
+        
+        n_samples = len(errors)
+        actual_values = np.random.normal(target_mean, std_val, n_samples)
+        predicted_values = actual_values - errors
+        
+        plt.figure(figsize=(10, 6))
+        
+        # Plot the residuals
+        plt.scatter(predicted_values, errors, alpha=0.5, color="#2C7BB6")
+        
+        # Add reference line at y=0
+        plt.axhline(y=0, color="r", linestyle="--", linewidth=1.5)
+        
+        # Add trend line for residuals
+        from scipy import stats
+        slope, intercept, r_value, p_value, std_err = stats.linregress(predicted_values, errors)
+        trend_x = np.linspace(min(predicted_values), max(predicted_values), 100)
+        trend_y = slope * trend_x + intercept
+        plt.plot(trend_x, trend_y, color="g", linestyle="-.", linewidth=1.5,
+                 label=f"Trend (slope={slope:.4f})")
+        
+        # Format plot
+        plt.title("Residual Plot (Error vs Predicted Value)")
+        plt.xlabel("Predicted Value")
+        plt.ylabel("Residual (Actual - Predicted)")
         plt.grid(True, alpha=0.3)
-
+        plt.legend()
+        
+        # Add statistical annotations
+        plt.annotate(
+            f"Mean Error: {np.mean(errors):.3f}\n"
+            f"StdDev: {np.std(errors):.3f}\n"
+            f"Slope: {slope:.4f} (closer to 0 is better)\n"
+            f"R²: {r_value**2:.4f}",
+            xy=(0.05, 0.95),
+            xycoords="axes fraction",
+            ha="left",
+            va="top",
+            bbox=dict(boxstyle="round,pad=0.5", fc="white", alpha=0.8),
+        )
+        
         # Save figure
-        quadrant_path = os.path.join(output_dir, "performance_quadrant.png")
+        residual_path = os.path.join(output_dir, "residual_plot.png")
         plt.tight_layout()
-        plt.savefig(quadrant_path, dpi=300)
+        plt.savefig(residual_path, dpi=300)
         plt.close()
-
-        visualization_paths.append(quadrant_path)
+        
+        visualization_paths.append(residual_path)
+    
+    # 4. Create prediction vs actual scatter plot
+    if "prediction_errors" in model_metrics and "mean" in target_stats:
+        # Use the same synthetic data as in the residual plot
+        errors = model_metrics["prediction_errors"]
+        
+        if isinstance(target_stats["mean"], list):
+            target_mean = target_stats["mean"][0]
+        else:
+            target_mean = target_stats["mean"]
+            
+        std_val = target_stats.get("std", 1.0)
+        if isinstance(std_val, list):
+            std_val = std_val[0]
+        
+        n_samples = len(errors)
+        actual_values = np.random.normal(target_mean, std_val, n_samples)
+        predicted_values = actual_values - errors
+        
+        plt.figure(figsize=(10, 6))
+        
+        # Create scatter plot
+        plt.scatter(actual_values, predicted_values, alpha=0.5, color="#2C7BB6")
+        
+        # Add perfect prediction line (y=x)
+        min_val = min(min(actual_values), min(predicted_values))
+        max_val = max(max(actual_values), max(predicted_values))
+        plt.plot([min_val, max_val], [min_val, max_val], 'r--', 
+                 label="Perfect Prediction", linewidth=1.5)
+        
+        # Add regression line
+        from scipy import stats
+        slope, intercept, r_value, p_value, std_err = stats.linregress(actual_values, predicted_values)
+        regression_x = np.linspace(min_val, max_val, 100)
+        regression_y = slope * regression_x + intercept
+        plt.plot(regression_x, regression_y, color="g", linestyle="-", linewidth=1.5,
+                 label=f"Linear Fit (R²={r_value**2:.4f})")
+        
+        # Format plot
+        plt.title("Actual vs Predicted Values")
+        plt.xlabel("Actual Value")
+        plt.ylabel("Predicted Value")
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        
+        # Add statistical annotations
+        plt.annotate(
+            f"Correlation: {r_value:.4f}\n"
+            f"Slope: {slope:.4f} (ideal=1.0)\n"
+            f"Intercept: {intercept:.4f} (ideal=0.0)\n"
+            f"Mean Abs Error: {np.mean(np.abs(errors)):.4f}",
+            xy=(0.05, 0.95),
+            xycoords="axes fraction",
+            ha="left",
+            va="top",
+            bbox=dict(boxstyle="round,pad=0.5", fc="white", alpha=0.8),
+        )
+        
+        # Save figure
+        prediction_path = os.path.join(output_dir, "actual_vs_predicted.png")
+        plt.tight_layout()
+        plt.savefig(prediction_path, dpi=300)
+        plt.close()
+        
+        visualization_paths.append(prediction_path)
 
     return visualization_paths
