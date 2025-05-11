@@ -674,23 +674,34 @@ def visualize_training_metrics(
 
     if metric_names is None:
         # Default metrics to visualize
-        metric_names = ["train_loss", "val_loss", "train_mse", "val_mse", "train_mae", "val_mae", "learning_rate"]
+        metric_names = [
+            "train_loss",
+            "val_loss",
+            "train_mse",
+            "val_mse",
+            "train_mae",
+            "val_mae",
+            "learning_rate",
+        ]
 
     # Connect to MLflow
     client = mlflow.tracking.MlflowClient()
 
     # Get experiment - try with the name used in train.py
     experiment = mlflow.get_experiment_by_name("dsl-performance-prediction")
-    
+
     # Try alternative experiment names if not found
     if experiment is None:
         print("Trying alternative experiment names...")
-        for exp_name in ["dsl_performance_prediction", "palladio-performance-prediction"]:
+        for exp_name in [
+            "dsl_performance_prediction",
+            "palladio-performance-prediction",
+        ]:
             experiment = mlflow.get_experiment_by_name(exp_name)
             if experiment is not None:
                 print(f"Found experiment: {exp_name}")
                 break
-    
+
     # Check if still None
     if experiment is None:
         print(
@@ -704,9 +715,9 @@ def visualize_training_metrics(
         filter_strings = [
             "params.model_type = 'torch_regressor'",
             "params.model_type = 'torch'",
-            "params.model = 'torch'"
+            "params.model = 'torch'",
         ]
-        
+
         runs = []
         for filter_string in filter_strings:
             runs = client.search_runs(
@@ -769,7 +780,11 @@ def visualize_training_metrics(
         plt.close()
 
     # Also create a combined plot for loss metrics
-    loss_metrics = [m for m in metrics_data.keys() if "loss" in m.lower() and not m.startswith("batch_")]
+    loss_metrics = [
+        m
+        for m in metrics_data.keys()
+        if "loss" in m.lower() and not m.startswith("batch_")
+    ]
     if loss_metrics:
         plt.figure(figsize=(12, 6))
 
@@ -791,26 +806,26 @@ def visualize_training_metrics(
         plt.tight_layout()
         plt.savefig(os.path.join(output_dir, "combined_loss_history.png"), dpi=300)
         plt.close()
-    
+
     # Create batch-level plot if available
     batch_metrics = client.get_metric_history(run_id, "batch_train_loss")
     if batch_metrics:
         plt.figure(figsize=(12, 6))
-        
+
         # Extract batch indices and values
         batch_indices = [m.step for m in batch_metrics]
         batch_values = [m.value for m in batch_metrics]
-        
+
         plt.plot(batch_indices, batch_values, alpha=0.7, linewidth=1)
-        
+
         # Format title and labels
         plt.title("Training Loss at Batch Level")
         plt.xlabel("Batch")
         plt.ylabel("Loss")
-        
+
         # Add grid for readability
         plt.grid(True, alpha=0.3)
-        
+
         # Save figure
         plt.tight_layout()
         plt.savefig(os.path.join(output_dir, "batch_loss_history.png"), dpi=300)
@@ -1165,6 +1180,85 @@ def generate_dashboard_from_files(data_dir=".", pattern="*_model.pkl"):
         return df
 
     return None
+
+
+def visualize_performance_context(
+    run_id=None, output_dir="figures/performance_context"
+):
+    """
+    Visualize performance context metrics from MLflow for a specific run.
+
+    Args:
+        run_id: Specific MLflow run ID (if None, uses latest run)
+        output_dir: Directory to save visualizations
+
+    Returns:
+        Path to the performance summary markdown file
+    """
+    create_dirs()
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Connect to MLflow
+    client = mlflow.tracking.MlflowClient()
+
+    # Get experiment
+    experiment = mlflow.get_experiment_by_name("dsl-performance-prediction")
+
+    if experiment is None:
+        print("No MLflow experiment found.")
+        return None
+
+    # Get run
+    if run_id is None:
+        runs = client.search_runs(
+            experiment_ids=[experiment.experiment_id], order_by=["start_time DESC"]
+        )
+        if not runs:
+            print("No runs found")
+            return None
+        run = runs[0]
+        run_id = run.info.run_id
+    else:
+        run = client.get_run(run_id)
+
+    # Check if performance summary exists
+    artifacts = client.list_artifacts(run_id)
+    summary_path = None
+    for artifact in artifacts:
+        if artifact.path == "performance_summary.md":
+            # Download artifact
+            temp_path = client.download_artifacts(run_id, artifact.path)
+
+            # Copy to output directory
+            output_path = os.path.join(output_dir, "performance_summary.md")
+            shutil.copy(temp_path, output_path)
+            summary_path = output_path
+
+            # Also print contents to console
+            with open(output_path, "r") as f:
+                summary_content = f.read()
+                print("\n" + "=" * 40)
+                print("PERFORMANCE SUMMARY")
+                print("=" * 40)
+                print(summary_content)
+                print("=" * 40 + "\n")
+
+            break
+
+    # Copy visualization images if available
+    for image_name in [
+        "mse_baseline_comparison.png",
+        "error_distribution_context.png",
+        "performance_quadrant.png",
+    ]:
+        try:
+            temp_path = client.download_artifacts(run_id, image_name)
+            output_path = os.path.join(output_dir, image_name)
+            shutil.copy(temp_path, output_path)
+        except:
+            pass
+
+    return summary_path
 
 
 if __name__ == "__main__":

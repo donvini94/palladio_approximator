@@ -299,6 +299,25 @@ if [[ "$1" == "summarize" ]]; then
     exit 0
 fi
 
+if [[ "$1" == "performance-summary" ]]; then
+    # Optional run ID
+    RUN_ID=""
+    if [ ! -z "$2" ]; then
+        RUN_ID="--run_id $2"
+    fi
+
+    # Generate performance summary
+    docker run --rm -it \
+        --device=nvidia.com/gpu=all \
+        -v "$(pwd)":/app \
+        -v "$(pwd)/data":/app/data \
+        -v "$(pwd)/mlruns":/app/mlruns \
+        --network host \
+        -w /app \
+        registry.dumusstbereitsein.de/palladio_approximator python3 summarize_performance.py $RUN_ID
+    exit 0
+fi
+
 # Print usage if no valid command was provided
 echo "Usage: ./run.sh [command]"
 echo "Commands:"
