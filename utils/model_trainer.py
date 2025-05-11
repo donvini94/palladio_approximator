@@ -30,19 +30,59 @@ def train_model(args, X_train, y_train, X_val, y_val, X_test, y_test):
     print(f"=== Starting model training at {time.strftime('%H:%M:%S')} ===")
     print(f"Training {args.model} model on data with shape: X_train={X_train.shape}, y_train={y_train.shape}")
 
-    # Train model based on selected type
+    # Perform hyperparameter optimization if requested
+    if args.optimize_hyperparameters:
+        print(f"=== Running hyperparameter optimization with {args.n_trials} trials ===")
+        # Import here to avoid circular imports
+        from utils.hyperparameter_optimization import run_hyperparameter_optimization
+        
+        # Run optimization to get best hyperparameters
+        best_params, optimization_history = run_hyperparameter_optimization(
+            args, X_train, y_train, X_val, y_val
+        )
+        
+        print(f"Optimization complete. Best parameters: {best_params}")
+        
+        # Update args with best hyperparameters
+        for param, value in best_params.items():
+            if hasattr(args, param):
+                print(f"Setting optimized parameter: {param} = {value}")
+                setattr(args, param, value)
+    
+    # Train model based on selected type (using optimized parameters if available)
     if args.model == "rf":
-        model = train_random_forest(X_train, y_train, n_estimators=args.n_estimators)
+        # Extract RF-specific parameters from args
+        rf_params = {
+            'n_estimators': args.n_estimators
+        }
+        
+        # Add additional parameters if they were optimized
+        for param in ['max_depth', 'min_samples_split', 'min_samples_leaf']:
+            if hasattr(args, param):
+                rf_params[param] = getattr(args, param)
+                
+        model = train_random_forest(X_train, y_train, **rf_params)
     
     elif args.model == "torch":
         device = get_device(args)
         print(f"Training PyTorch model on {device}...")
+        
+        # Extract PyTorch-specific parameters from args
+        torch_params = {
+            'epochs': args.epochs,
+            'batch_size': args.batch_size,
+            'device': device,
+        }
+        
+        # Add additional parameters if they were optimized
+        for param in ['learning_rate', 'hidden_dims', 'dropout_rate']:
+            if hasattr(args, param):
+                torch_params[param] = getattr(args, param)
+                
         model = train_torch_regressor(
             X_train,
             y_train,
-            device=device,
-            epochs=args.epochs,
-            batch_size=args.batch_size,
+            **torch_params
         )
         
         # Store model path in training_metrics for later use
@@ -51,9 +91,19 @@ def train_model(args, X_train, y_train, X_val, y_val, X_test, y_test):
     
     elif args.model in ("ridge", "lasso"):
         print("Training linear model...")
-        model = train_linear_model(
-            X_train, y_train, model_type=args.model, alpha=args.alpha
-        )
+        
+        # Extract linear model-specific parameters from args
+        linear_params = {
+            'model_type': args.model,
+            'alpha': args.alpha
+        }
+        
+        # Add additional parameters if they were optimized
+        for param in ['solver', 'max_iter']:
+            if hasattr(args, param):
+                linear_params[param] = getattr(args, param)
+                
+        model = train_linear_model(X_train, y_train, **linear_params)
     else:
         raise ValueError("Unsupported model type. Choose 'rf', 'torch', 'ridge', or 'lasso'")
 

@@ -44,16 +44,45 @@ def log_common_parameters(args):
                 "model_type": "rf",
                 "n_estimators": args.n_estimators,
             })
+            
+            # Add optimized parameters if available
+            for param in ['max_depth', 'min_samples_split', 'min_samples_leaf']:
+                if hasattr(args, param):
+                    params[param] = getattr(args, param)
+                    
         else:
             params.update({
                 "model_type": args.model,
                 "alpha": args.alpha,
             })
+            
+            # Add optimized parameters if available
+            for param in ['solver', 'max_iter']:
+                if hasattr(args, param):
+                    params[param] = getattr(args, param)
+                    
     elif args.model == "torch":
         params.update({
             "model_type": "torch",  # For compatibility with visualize_training_metrics
             "epochs": args.epochs,
             "batch_size": args.batch_size,
+        })
+        
+        # Add optimized parameters if available
+        for param in ['learning_rate', 'dropout_rate']:
+            if hasattr(args, param):
+                params[param] = getattr(args, param)
+                
+        # Add hidden_dims as string if available
+        if hasattr(args, 'hidden_dims'):
+            params['hidden_dims'] = str(args.hidden_dims)
+    
+    # Log hyperparameter optimization settings
+    if hasattr(args, 'optimize_hyperparameters'):
+        params.update({
+            "optimize_hyperparameters": args.optimize_hyperparameters,
+            "n_trials": args.n_trials if args.optimize_hyperparameters else None,
+            "optimization_metric": args.optimization_metric if args.optimize_hyperparameters else None,
         })
     
     mlflow.log_params(params)

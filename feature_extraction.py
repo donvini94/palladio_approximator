@@ -16,6 +16,7 @@ import gc
 import json
 import glob
 from pathlib import Path
+from dataset import load_dataset
 
 # Set tokenizers parallelism explicitly before import/usage
 # This prevents the warning when using DataLoader with num_workers > 0
@@ -290,9 +291,7 @@ def extract_features(args, device):
 
     print("Loading dataset...")
     train_samples, val_samples, test_samples = load_dataset(
-        args.data_dir, 
-        save_dataset=args.save_dataset, 
-        load_dataset=args.load_dataset
+        args.data_dir, save_dataset=args.save_dataset, load_dataset=args.load_dataset
     )
     print(f"Dataset loaded. Train samples: {len(train_samples)}")
 
@@ -303,10 +302,12 @@ def extract_features(args, device):
 
     # Check if we should use hybrid features with structured architecture information
     use_structured = getattr(args, "use_structured_features", True)
-    
+
     # Check if we should use pre-computed embeddings
     use_precomputed_embeddings = getattr(args, "use_precomputed_embeddings", True)
-    precomputed_embeddings_dir = getattr(args, "precomputed_embeddings_dir", "features/llama_embeddings")
+    precomputed_embeddings_dir = getattr(
+        args, "precomputed_embeddings_dir", "features/llama_embeddings"
+    )
 
     if args.embedding == "tfidf":
         # Configure parameters based on model type
@@ -370,7 +371,7 @@ def extract_features(args, device):
                 use_4bit=args.use_4bit_llama,
                 memory_efficient=True,
                 use_precomputed_embeddings=use_precomputed_embeddings,
-                precomputed_embeddings_dir=precomputed_embeddings_dir
+                precomputed_embeddings_dir=precomputed_embeddings_dir,
             )
         )
 
@@ -422,10 +423,7 @@ def extract_features(args, device):
             # Handle different types of embedding models returned by build_llama_features
             if isinstance(model, dict) and model.get("precomputed", False):
                 # For a pre-computed model dict, add structured feature info
-                model.update({
-                    "structured_keys": feature_keys,
-                    "combined": True
-                })
+                model.update({"structured_keys": feature_keys, "combined": True})
                 embedding_model = (tokenizer, model)
             else:
                 # For a standard model, use the tuple with structured info
@@ -611,38 +609,51 @@ def build_llama_features(
     # First, try to use pre-computed embeddings if requested
     if use_precomputed_embeddings:
         print("Checking for pre-computed LLaMA embeddings...")
-        
+
         try:
             # Try to load pre-computed embeddings
-            all_embeddings, metadata, sample_ids_with_embeddings, sample_ids_without_embeddings = load_precomputed_llama_embeddings(
+            (
+                all_embeddings,
+                metadata,
+                sample_ids_with_embeddings,
+                sample_ids_without_embeddings,
+            ) = load_precomputed_llama_embeddings(
                 [train_samples, val_samples, test_samples],
-                embeddings_dir=precomputed_embeddings_dir
+                embeddings_dir=precomputed_embeddings_dir,
             )
-            
+
             # Check if we have a good coverage of embeddings
             total_samples = len(train_samples) + len(val_samples) + len(test_samples)
             coverage = len(sample_ids_with_embeddings) / total_samples
-            
+
             # Get embeddings and indices
-            train_embeddings, train_indices_with_emb, train_indices_without_emb = all_embeddings[0]
-            val_embeddings, val_indices_with_emb, val_indices_without_emb = all_embeddings[1]
-            test_embeddings, test_indices_with_emb, test_indices_without_emb = all_embeddings[2]
-            
+            train_embeddings, train_indices_with_emb, train_indices_without_emb = (
+                all_embeddings[0]
+            )
+            val_embeddings, val_indices_with_emb, val_indices_without_emb = (
+                all_embeddings[1]
+            )
+            test_embeddings, test_indices_with_emb, test_indices_without_emb = (
+                all_embeddings[2]
+            )
+
             if coverage > 0.95:  # More than 95% coverage, just use pre-computed
-                print(f"Using pre-computed embeddings for all samples (coverage: {coverage:.2%})")
-                
+                print(
+                    f"Using pre-computed embeddings for all samples (coverage: {coverage:.2%})"
+                )
+
                 # Extract targets
                 y_train = extract_targets(train_samples)
                 y_val = extract_targets(val_samples)
                 y_test = extract_targets(test_samples)
-                
+
                 # Create mock tokenizer and model for API compatibility
                 tokenizer = None
                 model = None
-                
+
                 # Create a mock model container with metadata
                 if metadata:
-                    embedding_dim = metadata.get('embedding_dim', 4096)
+                    embedding_dim = metadata.get("embedding_dim", 4096)
                     model_info = {
                         "model_name": metadata.get("model_name", model_name),
                         "embedding_dim": embedding_dim,
@@ -651,114 +662,186 @@ def build_llama_features(
                         "metadata": metadata,
                     }
                     model = model_info
-                
-                return train_embeddings, y_train, val_embeddings, y_val, test_embeddings, y_test, tokenizer, model
-                
+
+                return (
+                    train_embeddings,
+                    y_train,
+                    val_embeddings,
+                    y_val,
+                    test_embeddings,
+                    y_test,
+                    tokenizer,
+                    model,
+                )
+
             # Always use what's available, regardless of coverage percentage
             # Even low coverage is better than re-computing everything
-            print(f"Using pre-computed embeddings where available (coverage: {coverage:.2%})")
-            print(f"Will generate embeddings for {len(sample_ids_without_embeddings)} remaining samples")
-            
+            print(
+                f"Using pre-computed embeddings where available (coverage: {coverage:.2%})"
+            )
+            print(
+                f"Will generate embeddings for {len(sample_ids_without_embeddings)} remaining samples"
+            )
+
             # Need to load model for remaining samples
             tokenizer, model = _load_llama_model(
-                model_name, device, use_half_precision, use_8bit, use_4bit, memory_efficient
+                model_name,
+                device,
+                use_half_precision,
+                use_8bit,
+                use_4bit,
+                memory_efficient,
             )
-            
+
             # Function to get samples without embeddings
             def get_samples_without_embeddings(samples, indices_without_emb):
                 return samples.iloc[indices_without_emb].reset_index(drop=True)
-            
+
             # Get samples that need embeddings
-            train_without_emb = get_samples_without_embeddings(train_samples, train_indices_without_emb) if train_indices_without_emb else None
-            val_without_emb = get_samples_without_embeddings(val_samples, val_indices_without_emb) if val_indices_without_emb else None
-            test_without_emb = get_samples_without_embeddings(test_samples, test_indices_without_emb) if test_indices_without_emb else None
-            
+            train_without_emb = (
+                get_samples_without_embeddings(train_samples, train_indices_without_emb)
+                if train_indices_without_emb
+                else None
+            )
+            val_without_emb = (
+                get_samples_without_embeddings(val_samples, val_indices_without_emb)
+                if val_indices_without_emb
+                else None
+            )
+            test_without_emb = (
+                get_samples_without_embeddings(test_samples, test_indices_without_emb)
+                if test_indices_without_emb
+                else None
+            )
+
             # Generate embeddings for remaining samples
             # Use the existing encoder function
             print("Generating embeddings for remaining samples...")
-            
+
             def generate_missing_embeddings(samples_without_emb, embedding_dim):
                 if not samples_without_emb or len(samples_without_emb) == 0:
                     return np.zeros((0, embedding_dim))
                 return _encode_with_llama(
-                    samples_without_emb, tokenizer, model, device, 
+                    samples_without_emb,
+                    tokenizer,
+                    model,
+                    device,
                     max_length=1024,  # Default for LLaMA
                     sliding_window_overlap=100,
                     max_chunks_per_doc=15,
-                    use_half_precision=use_half_precision
+                    use_half_precision=use_half_precision,
                 )
-            
+
             # Get embedding dimension
-            embedding_dim = metadata.get('embedding_dim', 4096) if metadata else 4096
-            if not embedding_dim and hasattr(model, 'config') and hasattr(model.config, 'hidden_size'):
+            embedding_dim = metadata.get("embedding_dim", 4096) if metadata else 4096
+            if (
+                not embedding_dim
+                and hasattr(model, "config")
+                and hasattr(model.config, "hidden_size")
+            ):
                 embedding_dim = model.config.hidden_size
-            
+
             # Generate missing embeddings
-            train_missing_embeddings = generate_missing_embeddings(train_without_emb, embedding_dim) if train_without_emb is not None else None
-            val_missing_embeddings = generate_missing_embeddings(val_without_emb, embedding_dim) if val_without_emb is not None else None
-            test_missing_embeddings = generate_missing_embeddings(test_without_emb, embedding_dim) if test_without_emb is not None else None
-            
+            train_missing_embeddings = (
+                generate_missing_embeddings(train_without_emb, embedding_dim)
+                if train_without_emb is not None
+                else None
+            )
+            val_missing_embeddings = (
+                generate_missing_embeddings(val_without_emb, embedding_dim)
+                if val_without_emb is not None
+                else None
+            )
+            test_missing_embeddings = (
+                generate_missing_embeddings(test_without_emb, embedding_dim)
+                if test_without_emb is not None
+                else None
+            )
+
             # Complete the embeddings by filling in the missing values
-            def complete_embeddings(precomputed_embeddings, indices_with_emb, indices_without_emb, missing_embeddings, total_samples):
+            def complete_embeddings(
+                precomputed_embeddings,
+                indices_with_emb,
+                indices_without_emb,
+                missing_embeddings,
+                total_samples,
+            ):
                 # Create a new array for the complete embeddings
                 complete = np.zeros((total_samples, precomputed_embeddings.shape[1]))
-                
+
                 # Fill in the pre-computed embeddings
                 for idx, emb_idx in enumerate(indices_with_emb):
                     complete[emb_idx] = precomputed_embeddings[emb_idx]
-                
+
                 # Fill in the newly computed embeddings
                 if missing_embeddings is not None and indices_without_emb:
                     for idx, emb_idx in enumerate(indices_without_emb):
                         if idx < len(missing_embeddings):
                             complete[emb_idx] = missing_embeddings[idx]
-                
+
                 return complete
-            
+
             # Complete all embeddings
-            X_train = complete_embeddings(train_embeddings, train_indices_with_emb, train_indices_without_emb, 
-                                          train_missing_embeddings, len(train_samples))
-            X_val = complete_embeddings(val_embeddings, val_indices_with_emb, val_indices_without_emb, 
-                                        val_missing_embeddings, len(val_samples))
-            X_test = complete_embeddings(test_embeddings, test_indices_with_emb, test_indices_without_emb, 
-                                         test_missing_embeddings, len(test_samples))
-            
+            X_train = complete_embeddings(
+                train_embeddings,
+                train_indices_with_emb,
+                train_indices_without_emb,
+                train_missing_embeddings,
+                len(train_samples),
+            )
+            X_val = complete_embeddings(
+                val_embeddings,
+                val_indices_with_emb,
+                val_indices_without_emb,
+                val_missing_embeddings,
+                len(val_samples),
+            )
+            X_test = complete_embeddings(
+                test_embeddings,
+                test_indices_with_emb,
+                test_indices_without_emb,
+                test_missing_embeddings,
+                len(test_samples),
+            )
+
             # Extract targets
             y_train = extract_targets(train_samples)
             y_val = extract_targets(val_samples)
             y_test = extract_targets(test_samples)
-            
+
             # Add metadata to model
             if isinstance(model, dict):
-                model.update({
-                    "precomputed_partial": True,
-                    "coverage": coverage,
-                    "metadata": metadata
-                })
-                
+                model.update(
+                    {
+                        "precomputed_partial": True,
+                        "coverage": coverage,
+                        "metadata": metadata,
+                    }
+                )
+
             print("Feature extraction complete (hybrid pre-computed/on-the-fly)!")
             print(f"Features shape: X_train={X_train.shape}, y_train={y_train.shape}")
             print(f"X_val={X_val.shape}, X_test={X_test.shape}")
-            
+
             # Free GPU memory
             if device == "cuda":
                 print("Clearing GPU cache...")
                 torch.cuda.empty_cache()
-            
+
             return X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model
-        
+
         except Exception as e:
             print(f"Error using pre-computed embeddings: {e}")
             print("Falling back to on-the-fly embedding generation")
-    
+
     # If we got here, we're generating embeddings without using pre-computed ones
     print(f"Setting up embeddings with {model_name} (on-the-fly generation)")
-    
+
     # Load the LLaMA model
     tokenizer, model = _load_llama_model(
         model_name, device, use_half_precision, use_8bit, use_4bit, memory_efficient
     )
-    
+
     # Get model context length - LLaMA models can handle much longer contexts
     try:
         # Try to get context length from model config
@@ -796,31 +879,40 @@ def build_llama_features(
     # Process datasets
     print(f"Processing training set ({len(train_samples)} samples)...")
     X_train = _encode_with_llama(
-        train_samples, tokenizer, model, device,
+        train_samples,
+        tokenizer,
+        model,
+        device,
         max_length=max_length,
         sliding_window_overlap=sliding_window_overlap,
         max_chunks_per_doc=max_chunks_per_doc,
-        use_half_precision=use_half_precision
+        use_half_precision=use_half_precision,
     )
     y_train = extract_targets(train_samples)
 
     print(f"Processing validation set ({len(val_samples)} samples)...")
     X_val = _encode_with_llama(
-        val_samples, tokenizer, model, device,
+        val_samples,
+        tokenizer,
+        model,
+        device,
         max_length=max_length,
         sliding_window_overlap=sliding_window_overlap,
         max_chunks_per_doc=max_chunks_per_doc,
-        use_half_precision=use_half_precision
+        use_half_precision=use_half_precision,
     )
     y_val = extract_targets(val_samples)
 
     print(f"Processing test set ({len(test_samples)} samples)...")
     X_test = _encode_with_llama(
-        test_samples, tokenizer, model, device,
+        test_samples,
+        tokenizer,
+        model,
+        device,
         max_length=max_length,
         sliding_window_overlap=sliding_window_overlap,
         max_chunks_per_doc=max_chunks_per_doc,
-        use_half_precision=use_half_precision
+        use_half_precision=use_half_precision,
     )
     y_test = extract_targets(test_samples)
 
@@ -836,7 +928,9 @@ def build_llama_features(
     return X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model
 
 
-def _load_llama_model(model_name, device, use_half_precision, use_8bit, use_4bit, memory_efficient):
+def _load_llama_model(
+    model_name, device, use_half_precision, use_8bit, use_4bit, memory_efficient
+):
     """Helper function to load the LLaMA model with optimizations."""
     # Force device to CPU if CUDA not available
     if device == "cuda" and not torch.cuda.is_available():
@@ -971,13 +1065,20 @@ def _load_llama_model(model_name, device, use_half_precision, use_8bit, use_4bit
             raise RuntimeError(
                 "Could not load any Llama model. Please check your transformers and torch installation."
             )
-    
+
     return tokenizer, model
 
 
-def _encode_with_llama(df, tokenizer, model, device, max_length=1024, 
-                       sliding_window_overlap=100, max_chunks_per_doc=15,
-                       use_half_precision=True):
+def _encode_with_llama(
+    df,
+    tokenizer,
+    model,
+    device,
+    max_length=1024,
+    sliding_window_overlap=100,
+    max_chunks_per_doc=15,
+    use_half_precision=True,
+):
     """
     Create embeddings from text using a Llama-based model.
     Optimized for long code sequences and large models.
@@ -1012,9 +1113,7 @@ def _encode_with_llama(df, tokenizer, model, device, max_length=1024,
 
     # Process texts one by one to minimize memory usage
     actual_batch_size = 1  # Force batch size to 1 for LLaMA
-    for i in tqdm(
-        range(0, len(texts), actual_batch_size), desc=f"Encoding with LLaMA"
-    ):
+    for i in tqdm(range(0, len(texts), actual_batch_size), desc=f"Encoding with LLaMA"):
         batch_texts = texts[i : i + actual_batch_size]
         batch_embeddings = []
 
@@ -1031,22 +1130,16 @@ def _encode_with_llama(df, tokenizer, model, device, max_length=1024,
             # Handle empty text
             if not text or len(text.strip()) == 0:
                 # Create embedding for empty text
-                inputs = tokenizer(" ", return_tensors="pt", padding=True).to(
-                    device
-                )
+                inputs = tokenizer(" ", return_tensors="pt", padding=True).to(device)
                 with torch.no_grad():
                     # For CausalLM models, use the hidden states
                     if isinstance(model, AutoModelForCausalLM):
                         outputs = model(**inputs, output_hidden_states=True)
                         # Use last layer's hidden state of the last token
-                        embedding = (
-                            outputs.hidden_states[-1][0, -1, :].cpu().numpy()
-                        )
+                        embedding = outputs.hidden_states[-1][0, -1, :].cpu().numpy()
                     else:
                         outputs = model(**inputs)
-                        embedding = (
-                            outputs.last_hidden_state[:, 0, :].cpu().numpy()[0]
-                        )
+                        embedding = outputs.last_hidden_state[:, 0, :].cpu().numpy()[0]
 
                 normalized_emb = embedding / np.linalg.norm(embedding)
                 batch_embeddings.append(normalized_emb)
@@ -1125,9 +1218,7 @@ def _encode_with_llama(df, tokenizer, model, device, max_length=1024,
                             if valid_breaks:
                                 # Prioritize code structure breaks over simple newlines
                                 code_breaks = [
-                                    b
-                                    for b in valid_breaks
-                                    if b[1] == "code_structure"
+                                    b for b in valid_breaks if b[1] == "code_structure"
                                 ]
                                 if code_breaks:
                                     break_pos = code_breaks[-1][0]
@@ -1160,7 +1251,11 @@ def _encode_with_llama(df, tokenizer, model, device, max_length=1024,
 
                 # Further limit chunks for memory efficiency with large models
                 # Increased from 4/6 to 8/12 for better document coverage
-                max_chunks = 8 if "13b" in getattr(model, "config", {}).name_or_path.lower() else 12
+                max_chunks = (
+                    8
+                    if "13b" in getattr(model, "config", {}).name_or_path.lower()
+                    else 12
+                )
                 if len(chunks) > max_chunks:
                     print(
                         f"Limiting document from {len(chunks)} to {max_chunks} chunks due to memory constraints"
@@ -1208,9 +1303,7 @@ def _encode_with_llama(df, tokenizer, model, device, max_length=1024,
                         if amp_enabled:
                             with torch.amp.autocast("cuda"):
                                 if isinstance(model, AutoModelForCausalLM):
-                                    outputs = model(
-                                        **inputs, output_hidden_states=True
-                                    )
+                                    outputs = model(**inputs, output_hidden_states=True)
                                     # Use last hidden layer representation
                                     hidden_states = outputs.hidden_states[-1]
                                     # Average the token embeddings
@@ -1239,9 +1332,7 @@ def _encode_with_llama(df, tokenizer, model, device, max_length=1024,
                             else:
                                 outputs = model(**inputs)
                                 embedding = (
-                                    outputs.last_hidden_state[:, 0, :]
-                                    .cpu()
-                                    .numpy()[0]
+                                    outputs.last_hidden_state[:, 0, :].cpu().numpy()[0]
                                 )
 
                     # Normalize embedding
@@ -1333,15 +1424,19 @@ def _encode_with_llama(df, tokenizer, model, device, max_length=1024,
     return np.vstack(embeddings)
 
 
-def load_precomputed_llama_embeddings(samples_list, embeddings_dir="features/llama_embeddings", metadata_file="embedding_metadata.json"):
+def load_precomputed_llama_embeddings(
+    samples_list,
+    embeddings_dir="features/llama_embeddings",
+    metadata_file="embedding_metadata.json",
+):
     """
     Load pre-computed LLaMA embeddings from disk.
-    
+
     Args:
         samples_list: List of DataFrames containing samples (train, val, test)
         embeddings_dir: Directory containing pre-computed embeddings
         metadata_file: Filename of metadata JSON in embeddings_dir
-    
+
     Returns:
         tuple: (embeddings_list, metadata, sample_ids_with_embeddings, sample_ids_without_embeddings)
             embeddings_list: List of numpy arrays containing embeddings for each samples list
@@ -1352,38 +1447,39 @@ def load_precomputed_llama_embeddings(samples_list, embeddings_dir="features/lla
     print(f"Loading pre-computed LLaMA embeddings from {embeddings_dir}...")
     embeddings_path = Path(embeddings_dir)
     metadata_path = embeddings_path / metadata_file
-    
+
     # Load metadata if available
     metadata = None
     if metadata_path.exists():
         try:
-            with open(metadata_path, 'r') as f:
+            with open(metadata_path, "r") as f:
                 metadata = json.load(f)
-            print(f"Loaded embedding metadata. Model: {metadata.get('model_name', 'unknown')}, "
-                  f"Dimension: {metadata.get('embedding_dim', 'unknown')}")
+            print(
+                f"Loaded embedding metadata. Model: {metadata.get('model_name', 'unknown')}, "
+                f"Dimension: {metadata.get('embedding_dim', 'unknown')}"
+            )
         except Exception as e:
             print(f"Warning: Could not load embedding metadata: {e}")
-    
+
     # Get all available embedding files
     available_embeddings = {
-        Path(path).stem: path 
-        for path in glob.glob(str(embeddings_path / "*.npy"))
+        Path(path).stem: path for path in glob.glob(str(embeddings_path / "*.npy"))
     }
-    
+
     print(f"Found {len(available_embeddings)} pre-computed embeddings")
-    
+
     # Process each samples list (train, val, test)
     all_embeddings = []
     all_sample_ids_with_embeddings = []
     all_sample_ids_without_embeddings = []
-    
+
     for samples in samples_list:
         # Extract file IDs from filenames in the dataset
         sample_ids = []
         for _, sample in samples.iterrows():
             text = sample["tpcm_text"]
             file_id = None
-            
+
             # Method 1: Try to find file ID in file content
             # Start with the first 10 lines where metadata/comments usually appear
             for line in text.split("\n")[:10]:
@@ -1397,18 +1493,20 @@ def load_precomputed_llama_embeddings(samples_list, embeddings_dir="features/lla
                             break
                 if file_id:
                     break
-            
+
             # If no ID found in first 10 lines, scan the entire text
             if not file_id:
                 for line in text.split("\n"):
                     line = line.strip()
                     if line:
                         # Try to match common patterns in DSL files
-                        match = re.search(r"(model_[A-Za-z0-9_]+|generated__[A-Za-z0-9_]+)", line)
+                        match = re.search(
+                            r"(model_[A-Za-z0-9_]+|generated__[A-Za-z0-9_]+)", line
+                        )
                         if match:
                             file_id = match.group(1)
                             break
-            
+
             # Method 2: If index is available, try to match with filename pattern directly
             if not file_id and "filename" in sample:
                 filename = sample["filename"]
@@ -1416,9 +1514,11 @@ def load_precomputed_llama_embeddings(samples_list, embeddings_dir="features/lla
                     # Extract base name without extension
                     base_name = os.path.splitext(os.path.basename(filename))[0]
                     # Check if it matches our expected patterns
-                    if base_name.startswith("model_") or base_name.startswith("generated__"):
+                    if base_name.startswith("model_") or base_name.startswith(
+                        "generated__"
+                    ):
                         file_id = base_name
-            
+
             # Method 3: Try matching any available embedding by content length
             # This is a last resort fallback for when we can't identify the file
             if not file_id:
@@ -1426,15 +1526,15 @@ def load_precomputed_llama_embeddings(samples_list, embeddings_dir="features/lla
                 text_fingerprint = len(text.strip())
                 # Use a numerical identifier based on row index + text length
                 file_id = f"unknown_len_{text_fingerprint}_idx_{_}"
-            
+
             sample_ids.append(file_id)
-        
+
         # Find which samples have pre-computed embeddings
         sample_ids_with_embeddings = []
         sample_indices_with_embeddings = []
         sample_ids_without_embeddings = []
         sample_indices_without_embeddings = []
-        
+
         for i, sample_id in enumerate(sample_ids):
             if sample_id and sample_id in available_embeddings:
                 sample_ids_with_embeddings.append(sample_id)
@@ -1445,21 +1545,23 @@ def load_precomputed_llama_embeddings(samples_list, embeddings_dir="features/lla
                 else:
                     sample_ids_without_embeddings.append(f"unknown_at_index_{i}")
                 sample_indices_without_embeddings.append(i)
-        
+
         # Store globally
         all_sample_ids_with_embeddings.extend(sample_ids_with_embeddings)
         all_sample_ids_without_embeddings.extend(sample_ids_without_embeddings)
-        
+
         # Load embeddings for samples that have them
         embeddings = None
         if sample_indices_with_embeddings:
             # Determine embedding dimension from metadata or first file
-            embedding_dim = metadata.get('embedding_dim', 4096) if metadata else 4096
+            embedding_dim = metadata.get("embedding_dim", 4096) if metadata else 4096
             # Pre-allocate array for all samples
             embeddings = np.zeros((len(samples), embedding_dim))
-            
+
             # Load each embedding
-            for sample_id, idx in zip(sample_ids_with_embeddings, sample_indices_with_embeddings):
+            for sample_id, idx in zip(
+                sample_ids_with_embeddings, sample_indices_with_embeddings
+            ):
                 embedding_path = available_embeddings[sample_id]
                 try:
                     embedding = np.load(embedding_path)
@@ -1471,13 +1573,28 @@ def load_precomputed_llama_embeddings(samples_list, embeddings_dir="features/lla
                     sample_indices_without_embeddings.append(idx)
                     sample_ids_with_embeddings.remove(sample_id)
                     sample_ids_without_embeddings.append(sample_id)
-        
-        all_embeddings.append((embeddings, sample_indices_with_embeddings, sample_indices_without_embeddings))
-    
-    coverage = len(all_sample_ids_with_embeddings) / sum(len(s) for s in samples_list) * 100
-    print(f"Pre-computed embeddings coverage: {coverage:.2f}% ({len(all_sample_ids_with_embeddings)} out of {sum(len(s) for s in samples_list)} samples)")
-    
-    return all_embeddings, metadata, all_sample_ids_with_embeddings, all_sample_ids_without_embeddings
+
+        all_embeddings.append(
+            (
+                embeddings,
+                sample_indices_with_embeddings,
+                sample_indices_without_embeddings,
+            )
+        )
+
+    coverage = (
+        len(all_sample_ids_with_embeddings) / sum(len(s) for s in samples_list) * 100
+    )
+    print(
+        f"Pre-computed embeddings coverage: {coverage:.2f}% ({len(all_sample_ids_with_embeddings)} out of {sum(len(s) for s in samples_list)} samples)"
+    )
+
+    return (
+        all_embeddings,
+        metadata,
+        all_sample_ids_with_embeddings,
+        all_sample_ids_without_embeddings,
+    )
 
 
 def build_bert_features(

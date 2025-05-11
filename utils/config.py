@@ -76,12 +76,40 @@ def parse_args():
         choices=["summary"],
         default="summary",
     )
+    
+    # Model hyperparameters
     parser.add_argument("--n_estimators", type=int, default=100)
     parser.add_argument("--alpha", type=float, default=1.0)
 
     # PyTorch model parameters
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=64)
+    
+    # Hyperparameter optimization parameters
+    parser.add_argument(
+        "--optimize_hyperparameters",
+        action="store_true",
+        help="Run hyperparameter optimization using Optuna before training",
+    )
+    parser.add_argument(
+        "--no_optimize_hyperparameters",
+        dest="optimize_hyperparameters",
+        action="store_false",
+        help="Disable hyperparameter optimization",
+    )
+    parser.add_argument(
+        "--n_trials",
+        type=int,
+        default=30,
+        help="Number of trials for hyperparameter optimization",
+    )
+    parser.add_argument(
+        "--optimization_metric",
+        type=str,
+        choices=["val_mse", "val_mae", "val_r2"],
+        default="val_mse",
+        help="Metric to optimize during hyperparameter tuning",
+    )
 
     # GPU-related flags
     parser.add_argument(
@@ -147,6 +175,7 @@ def parse_args():
         save_dataset=True,
         load_dataset=True,
         use_precomputed_embeddings=True,
+        optimize_hyperparameters=False,
     )
 
     print("Parsing arguments...")
