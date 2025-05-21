@@ -55,8 +55,8 @@ fi
 if [[ "$1" == "batch-experiments" ]]; then
     # Get optional settings
     MODES=${2:-"summary"}
-    EMBEDDINGS=${3:-"tfidf bert llama"}
-    MODELS=${4:-"rf ridge lasso torch"}
+    EMBEDDINGS=${3:-"tfidf bert "}
+    MODELS=${4:-"ridge lasso torch"}
 
     echo "====================================="
     echo "Starting batch experiments"

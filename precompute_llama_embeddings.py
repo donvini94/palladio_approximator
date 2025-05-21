@@ -211,11 +211,6 @@ def setup_model(model_name, use_4bit=True, use_8bit=False):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info(f"Using device: {device}")
 
-    # Set memory-efficient PyTorch configuration
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = (
-        "expandable_segments:True,max_split_size_mb:512"
-    )
-
     # Free up memory before loading model
     gc.collect()
     if torch.cuda.is_available():

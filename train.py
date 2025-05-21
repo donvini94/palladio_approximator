@@ -9,11 +9,9 @@ This script orchestrates the entire training pipeline:
 5. Saving the model and tracking the experiment with MLflow
 """
 
-import os
 import sys
 import time
 import traceback
-import joblib
 import uuid
 import psutil
 import socket
@@ -27,7 +25,7 @@ from utils.config import (
     get_model_path,
 )
 from utils.feature_manager import get_features
-from utils.model_trainer import train_model, save_model, save_embedding_model_if_needed
+from utils.model_trainer import train_model, save_model, save_embedding_model
 from utils.mlflow_logger import (
     setup_mlflow,
     log_common_parameters,
@@ -114,10 +112,10 @@ def main():
     print(f"Experiment ID: {experiment_id}")
 
     # Get embedding model path
-    checkpoint_path, embedding_model_path = get_checkpoint_paths(args)
+    feature_path, embedding_model_path = get_checkpoint_paths(args)
 
     # Print key paths
-    print(f"Feature checkpoint path: {checkpoint_path}")
+    print(f"Feature checkpoint path: {feature_path}")
     print(f"Embedding model path: {embedding_model_path}")
 
     try:
@@ -176,7 +174,7 @@ def main():
         # Save embedding model if needed
         if args.save_features and embedding_model is not None:
             print(f"Saving embedding model to: {embedding_model_path}")
-            save_embedding_model_if_needed(embedding_model, embedding_model_path, args)
+            save_embedding_model(embedding_model, embedding_model_path, args)
 
         # Report total execution time
         elapsed_time = time.time() - start_time
@@ -186,20 +184,6 @@ def main():
         # Return explicit success code for batch script monitoring
         return 0
 
-    except KeyboardInterrupt:
-        print("\nProcess interrupted by user")
-        # Save work in progress
-        print("Attempting to save partial results...")
-        try:
-            interrupted_file = f"interrupted_state_{experiment_id}.pkl"
-            joblib.dump(
-                {"args": args, "interrupted": True, "timestamp": datetime.now()},
-                interrupted_file,
-            )
-            print(f"Saved interrupt state to {interrupted_file}")
-        except Exception as e:
-            print(f"Failed to save interrupt state: {e}")
-        sys.exit(1)
     except Exception as e:
         print(f"ERROR: {e}")
         traceback.print_exc()

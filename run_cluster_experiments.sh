@@ -16,7 +16,6 @@ N_TRIALS=50  # More trials for thorough optimization on a cluster
 OPTIMIZE_MODE="all"  # Options: all, fast, test
 USE_MLFLOW="--use_mlflow"  # Default to using MLflow
 USE_GPU="--use_gpu"
-USE_STRUCTURED="--use_structured_features"
 OUTPUT_DIR="cluster_experiments_$(date +%Y%m%d_%H%M%S)"
 
 # Function to print usage information
@@ -27,7 +26,6 @@ function print_usage() {
     echo "  --mode MODE          Optimization mode: all, fast, test (default: all)"
     echo "  --no-mlflow          Disable MLflow logging"
     echo "  --no-gpu             Disable GPU usage"
-    echo "  --no-structured      Disable structured feature extraction"
     echo "  --output-dir DIR     Output directory for logs (default: cluster_experiments_TIMESTAMP)"
     echo "  --help               Show this help message"
     echo ""
@@ -56,10 +54,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-gpu)
             USE_GPU=""
-            shift
-            ;;
-        --no-structured)
-            USE_STRUCTURED="--no_structured_features"
             shift
             ;;
         --output-dir)
@@ -99,7 +93,6 @@ echo -e "  Optimization Trials: $N_TRIALS" | tee -a "$LOG_FILE"
 echo -e "  Optimization Mode: $OPTIMIZE_MODE" | tee -a "$LOG_FILE"
 echo -e "  Using MLflow: ${USE_MLFLOW/--no_mlflow/No}" | tee -a "$LOG_FILE"
 echo -e "  Using GPU: ${USE_GPU:+Yes}" | tee -a "$LOG_FILE"
-echo -e "  Using Structured Features: ${USE_STRUCTURED/--no_structured_features/No}" | tee -a "$LOG_FILE"
 echo -e "  Output Directory: $OUTPUT_DIR" | tee -a "$LOG_FILE"
 
 # Create experiment summary header
@@ -111,7 +104,6 @@ cat > "$SUMMARY_FILE" << EOF
 - **Optimization Mode**: $OPTIMIZE_MODE
 - **Using MLflow**: ${USE_MLFLOW/--no_mlflow/No}
 - **Using GPU**: ${USE_GPU:+Yes}
-- **Using Structured Features**: ${USE_STRUCTURED/--no_structured_features/No}
 - **Started**: $(date)
 
 ## Experiment Results
@@ -173,7 +165,7 @@ for PREDICTION_MODE in "${PREDICTION_MODES[@]}"; do
             # Construct command with appropriate options
             CMD="python train.py --model $MODEL --embedding $EMBEDDING --prediction_mode $PREDICTION_MODE"
             CMD="$CMD --optimize_hyperparameters --n_trials $N_TRIALS --optimization_metric val_mse"
-            CMD="$CMD $USE_MLFLOW $USE_GPU $USE_STRUCTURED"
+            CMD="$CMD $USE_MLFLOW $USE_GPU"
             
             # Add model-specific arguments for better starting points
             case $MODEL in

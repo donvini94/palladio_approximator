@@ -54,7 +54,7 @@ def parse_args():
 def get_all_runs():
     """Retrieve all runs from MLflow."""
     client = MlflowClient()
-    experiment = client.get_experiment_by_name("dsl-performance-prediction")
+    experiment = client.get_experiment_by_name("palladio-approximation")
 
     if not experiment:
         print("No experiments found in MLflow")
@@ -134,10 +134,8 @@ def apply_filters(df, args):
 def generate_summary_tables(df):
     """Generate summary tables by model and embedding types."""
     # Define metrics to aggregate (if available)
-    metrics_to_agg = {
-        "run_id": "count"
-    }
-    
+    metrics_to_agg = {"run_id": "count"}
+
     # Add validation metrics if available
     if "val_r2_score" in df.columns:
         metrics_to_agg["val_r2_score"] = "mean"
@@ -145,7 +143,7 @@ def generate_summary_tables(df):
         metrics_to_agg["val_mse"] = "mean"
     if "val_mae" in df.columns:
         metrics_to_agg["val_mae"] = "mean"
-        
+
     # Add test metrics if available
     if "test_r2_score" in df.columns:
         metrics_to_agg["test_r2_score"] = "mean"
@@ -153,28 +151,18 @@ def generate_summary_tables(df):
         metrics_to_agg["test_mse"] = "mean"
     if "test_mae" in df.columns:
         metrics_to_agg["test_mae"] = "mean"
-    
+
     # Average metrics by model type
-    model_summary = (
-        df.groupby("model")
-        .agg(metrics_to_agg)
-        .reset_index()
-    )
+    model_summary = df.groupby("model").agg(metrics_to_agg).reset_index()
     model_summary.rename(columns={"run_id": "count"}, inplace=True)
 
     # Average metrics by embedding type
-    embedding_summary = (
-        df.groupby("embedding")
-        .agg(metrics_to_agg)
-        .reset_index()
-    )
+    embedding_summary = df.groupby("embedding").agg(metrics_to_agg).reset_index()
     embedding_summary.rename(columns={"run_id": "count"}, inplace=True)
 
     # Combined model+embedding summary
     combined_summary = (
-        df.groupby(["model", "embedding"])
-        .agg(metrics_to_agg)
-        .reset_index()
+        df.groupby(["model", "embedding"]).agg(metrics_to_agg).reset_index()
     )
     combined_summary.rename(columns={"run_id": "count"}, inplace=True)
 
@@ -206,7 +194,7 @@ def save_output(df, model_summary, embedding_summary, combined_summary, args):
 
             # Try to use to_markdown if tabulate is available, otherwise use to_string
             try:
-                # Model summary 
+                # Model summary
                 f.write("## Model Performance Summary\n\n")
                 f.write(model_summary.to_markdown(index=False))
                 f.write("\n\n")
@@ -223,7 +211,7 @@ def save_output(df, model_summary, embedding_summary, combined_summary, args):
             except ImportError:
                 # Fallback to to_string if tabulate is not available
                 print("Warning: tabulate package not found, using plain text format")
-                
+
                 f.write("## Model Performance Summary\n\n")
                 f.write("```\n")
                 f.write(model_summary.to_string(index=False))
@@ -243,22 +231,36 @@ def save_output(df, model_summary, embedding_summary, combined_summary, args):
             # Handle sorting like in console output
             sort_col = args.sort if args.sort in df.columns else "val_mse"
             if sort_col in df.columns:
-                sort_ascending = True if "mse" in sort_col or "mae" in sort_col else False
-                top_configs = df.sort_values(by=sort_col, ascending=sort_ascending).head(10)
-                f.write(f"Sorted by: {sort_col} ({'ascending' if sort_ascending else 'descending'})\n\n")
+                sort_ascending = (
+                    True if "mse" in sort_col or "mae" in sort_col else False
+                )
+                top_configs = df.sort_values(
+                    by=sort_col, ascending=sort_ascending
+                ).head(10)
+                f.write(
+                    f"Sorted by: {sort_col} ({'ascending' if sort_ascending else 'descending'})\n\n"
+                )
             else:
                 # If preferred sort column not available, try alternatives
                 for alt_col in ["val_mse", "val_mae", "val_r2_score", "start_time"]:
                     if alt_col in df.columns:
-                        sort_ascending = True if "mse" in alt_col or "mae" in alt_col else False
-                        top_configs = df.sort_values(by=alt_col, ascending=sort_ascending).head(10)
-                        f.write(f"Note: Sorting by {alt_col} instead of {args.sort} (not available)\n\n")
+                        sort_ascending = (
+                            True if "mse" in alt_col or "mae" in alt_col else False
+                        )
+                        top_configs = df.sort_values(
+                            by=alt_col, ascending=sort_ascending
+                        ).head(10)
+                        f.write(
+                            f"Note: Sorting by {alt_col} instead of {args.sort} (not available)\n\n"
+                        )
                         break
                 else:
                     # If no sorting column is available, just take the first 10
                     top_configs = df.head(10)
-                    f.write(f"Note: No metrics available for sorting, showing first 10 runs\n\n")
-            
+                    f.write(
+                        f"Note: No metrics available for sorting, showing first 10 runs\n\n"
+                    )
+
             try:
                 f.write(top_configs.to_markdown(index=False))
             except ImportError:
@@ -286,7 +288,7 @@ def print_summary_to_console(
     # Determine sort column for combined summary
     sort_col = args.sort if args.sort in combined_summary.columns else "val_mse"
     sort_ascending = True if "mse" in sort_col or "mae" in sort_col else False
-    
+
     print(f"Combined Model+Embedding Performance (Top 5, sorted by {sort_col}):")
     try:
         print(
@@ -301,9 +303,16 @@ def print_summary_to_console(
     print("Top 5 Performing Configurations:")
     # Get columns available in the dataframe
     cols_to_show = ["model", "embedding"]
-    
+
     # Add metrics if available
-    for metric in ["val_r2_score", "val_mse", "val_mae", "test_r2_score", "test_mse", "test_mae"]:
+    for metric in [
+        "val_r2_score",
+        "val_mse",
+        "val_mae",
+        "test_r2_score",
+        "test_mse",
+        "test_mae",
+    ]:
         if metric in df.columns:
             cols_to_show.append(metric)
 
@@ -325,14 +334,18 @@ def print_summary_to_console(
         for alt_col in ["val_mse", "val_mae", "val_r2_score", "start_time"]:
             if alt_col in df.columns:
                 sort_ascending = True if "mse" in alt_col or "mae" in alt_col else False
-                top_configs = df.sort_values(by=alt_col, ascending=sort_ascending).head(5)
-                print(f"Note: Sorting by {alt_col} instead of {args.sort} (not available)")
+                top_configs = df.sort_values(by=alt_col, ascending=sort_ascending).head(
+                    5
+                )
+                print(
+                    f"Note: Sorting by {alt_col} instead of {args.sort} (not available)"
+                )
                 break
         else:
             # If no sorting column is available, just take the first 5
             top_configs = df.head(5)
             print(f"Note: No metrics available for sorting, showing first 5 runs")
-    
+
     # Filter columns to only include those in dataframe
     filtered_cols = [col for col in cols_to_show if col in df.columns]
     if filtered_cols:

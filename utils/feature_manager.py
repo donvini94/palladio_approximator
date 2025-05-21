@@ -1,18 +1,16 @@
 """
 Feature management module for loading and saving dataset features.
 """
+
 import os
 import joblib
-import torch
-import numpy as np
 from utils.config import get_checkpoint_paths, get_device
 
-from dataset import load_dataset
 from feature_extraction import (
     build_tfidf_features,
     build_bert_features,
     build_llama_features,
-    extract_features as feature_extraction_func  # Import the actual extraction function
+    extract_features as feature_extraction_func,  # Import the actual extraction function
 )
 
 
@@ -29,7 +27,7 @@ def load_features_from_checkpoint(checkpoint_path, embedding_model_path=None):
     """
     print(f"Loading features from {checkpoint_path}...")
     embedding_model = None
-    
+
     try:
         feature_checkpoint = joblib.load(checkpoint_path)
         X_train = feature_checkpoint["X_train"]
@@ -46,7 +44,9 @@ def load_features_from_checkpoint(checkpoint_path, embedding_model_path=None):
         else:
             print("Embedding model not found. Only features will be available.")
 
-        print(f"Loaded features successfully: X_train={X_train.shape}, y_train={y_train.shape}")
+        print(
+            f"Loaded features successfully: X_train={X_train.shape}, y_train={y_train.shape}"
+        )
         print(f"X_val={X_val.shape}, X_test={X_test.shape}")
 
         return X_train, y_train, X_val, y_val, X_test, y_test, embedding_model, True
@@ -57,8 +57,17 @@ def load_features_from_checkpoint(checkpoint_path, embedding_model_path=None):
         return None, None, None, None, None, None, None, False
 
 
-def save_features(checkpoint_path, embedding_model_path, 
-                 X_train, y_train, X_val, y_val, X_test, y_test, embedding_model=None):
+def save_features(
+    checkpoint_path,
+    embedding_model_path,
+    X_train,
+    y_train,
+    X_val,
+    y_val,
+    X_test,
+    y_test,
+    embedding_model=None,
+):
     """Save extracted features and embedding model to disk.
 
     Args:
@@ -115,29 +124,36 @@ def get_features(args):
         tuple: (X_train, y_train, X_val, y_val, X_test, y_test, embedding_model)
     """
     checkpoint_path, embedding_model_path = get_checkpoint_paths(args)
-    
+
     # First check if we should load features from disk
     if args.load_features and os.path.exists(checkpoint_path):
-        X_train, y_train, X_val, y_val, X_test, y_test, embedding_model, success = load_features_from_checkpoint(
-            checkpoint_path, embedding_model_path
+        X_train, y_train, X_val, y_val, X_test, y_test, embedding_model, success = (
+            load_features_from_checkpoint(checkpoint_path, embedding_model_path)
         )
-        
+
         if success:
             return X_train, y_train, X_val, y_val, X_test, y_test, embedding_model
     elif args.load_features:
         print(f"Feature checkpoint {checkpoint_path} not found. Generating features.")
-    
+
     # Extract features if we couldn't load them
     device = get_device(args)
-    X_train, y_train, X_val, y_val, X_test, y_test, embedding_model = extract_features(args, device)
-    
+    X_train, y_train, X_val, y_val, X_test, y_test, embedding_model = extract_features(
+        args, device
+    )
+
     # Save embeddings as checkpoint if requested
     if args.save_features:
         save_features(
-            checkpoint_path, 
+            checkpoint_path,
             embedding_model_path,
-            X_train, y_train, X_val, y_val, X_test, y_test, 
-            embedding_model
+            X_train,
+            y_train,
+            X_val,
+            y_val,
+            X_test,
+            y_test,
+            embedding_model,
         )
-        
+
     return X_train, y_train, X_val, y_val, X_test, y_test, embedding_model

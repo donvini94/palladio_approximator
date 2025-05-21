@@ -8,7 +8,7 @@ import mlflow.sklearn
 import mlflow.pytorch
 
 
-def setup_mlflow(experiment_name="dsl-performance-prediction"):
+def setup_mlflow(experiment_name="palladio-approximation"):
     """Set up MLflow experiment tracking.
 
     Args:
@@ -229,7 +229,7 @@ def log_evaluation_results(
     import mlflow.sklearn
     import os
     import numpy as np
-    
+
     try:
         # Log the evaluation metrics
         mlflow.log_metrics(val_results)
@@ -294,11 +294,13 @@ def log_evaluation_results(
                 target_stats["variance"] = float(np.var(y_val))
 
             # Log target statistics
-            mlflow.log_params({f"target_stat_{k}": str(v) for k, v in target_stats.items()})
+            mlflow.log_params(
+                {f"target_stat_{k}": str(v) for k, v in target_stats.items()}
+            )
 
             # Calculate prediction errors for validation set
             predictions = model.predict(X_val)
-            
+
             # Filter out extreme outliers from errors to avoid visualization issues
             if len(y_val.shape) > 1 and y_val.shape[1] > 1:
                 # Take first output dimension for visualization - multi-output case
@@ -306,40 +308,40 @@ def log_evaluation_results(
             else:
                 # Single output case
                 raw_errors = predictions.flatten() - y_val.flatten()
-                
+
             # Apply outlier filtering - values more than 5 std from mean will be capped
             error_mean = np.mean(raw_errors)
             error_std = np.std(raw_errors)
             lower_bound = error_mean - 5 * error_std
             upper_bound = error_mean + 5 * error_std
             errors = np.clip(raw_errors, lower_bound, upper_bound)
-            
+
             # Add the actual val metrics to the model_metrics instead of just using val_results
             # which might have non-standard naming conventions
             multi_output = len(y_val.shape) > 1 and y_val.shape[1] > 1
-            
+
             if multi_output:
                 # Calculate MSE for each output dimension
                 mse = np.mean((y_val - predictions) ** 2, axis=0)
                 mae = np.mean(np.abs(y_val - predictions), axis=0)
-                
+
                 # Convert to list if numpy array
-                if hasattr(mse, 'tolist'):
+                if hasattr(mse, "tolist"):
                     mse = mse.tolist()
-                if hasattr(mae, 'tolist'):
+                if hasattr(mae, "tolist"):
                     mae = mae.tolist()
             else:
                 # Single output case
                 mse = np.mean((y_val.flatten() - predictions.flatten()) ** 2)
                 mae = np.mean(np.abs(y_val.flatten() - predictions.flatten()))
-            
+
             # Create a more complete model_metrics with correct keys
             model_metrics = {
                 "val_mse": mse,
                 "val_mae": mae,
-                "prediction_errors": errors
+                "prediction_errors": errors,
             }
-            
+
             # Also add all metrics from val_results if they're available
             model_metrics.update(val_results)
 
@@ -382,9 +384,9 @@ def log_evaluation_results(
                         # Check if info is a dictionary before proceeding
                         if not isinstance(info, dict):
                             continue
-                            
+
                         f.write(f"### {metric}\n")
-                        
+
                         # Only include value if it exists
                         if "value" in info and info["value"] is not None:
                             f.write(f"- Value: {info['value']}\n")
@@ -425,11 +427,14 @@ def log_evaluation_results(
                             # Use a generic tag instead
                             mlflow.set_tag("performance_summary_available", "true")
                 except Exception as e:
-                    print(f"Warning: Could not extract performance level for tagging: {e}")
+                    print(
+                        f"Warning: Could not extract performance level for tagging: {e}"
+                    )
     except Exception as e:
         # Log any errors that occur during metric processing
         print(f"ERROR: {e}")
         import traceback
+
         traceback.print_exc()
 
 

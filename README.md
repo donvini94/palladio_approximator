@@ -16,7 +16,6 @@ This project predicts system performance metrics (avg/min/max response time) fro
   - `Random Forest`
   - `Ridge` / `Lasso` Regression
   - `PyTorch Neural Network`
-- 🏛️ Structured architectural features extraction
 - 🔄 Dataset and feature caching for faster iterations
 - 🔁 Optional MLflow experiment tracking
 - 📦 Cleanly modular & easily extensible
@@ -96,14 +95,6 @@ python train.py --model rf --embedding bert --use_cuda
 python train.py --model rf --embedding bert --use_cuda --use_mlflow
 ```
 
-### ➤ Use structured features (enabled by default)
-```bash
-# Using structured features (default)
-python train.py --model rf --embedding tfidf --use_structured_features
-
-# Disable structured features
-python train.py --model rf --embedding tfidf --no_structured_features
-```
 
 ### ➤ Dataset Caching (enabled by default)
 ```bash

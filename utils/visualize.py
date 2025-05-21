@@ -1,5 +1,6 @@
 import os
 import glob
+import shutil
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -45,7 +46,7 @@ def performance_comparison_dashboard(runs=None, metric="test_mse", sort_by=None)
 
     if runs is None:
         client = mlflow.tracking.MlflowClient()
-        experiment = mlflow.get_experiment_by_name("dsl-performance-prediction")
+        experiment = mlflow.get_experiment_by_name("palladio-approximation")
         if experiment is None:
             print(
                 "No MLflow experiment found. Create one first by running training with --use_mlflow"
@@ -688,7 +689,7 @@ def visualize_training_metrics(
     client = mlflow.tracking.MlflowClient()
 
     # Get experiment - try with the name used in train.py
-    experiment = mlflow.get_experiment_by_name("dsl-performance-prediction")
+    experiment = mlflow.get_experiment_by_name("palladio-approximation")
 
     # Try alternative experiment names if not found
     if experiment is None:
@@ -861,7 +862,7 @@ def create_experiment_summary():
     create_dirs()
 
     client = mlflow.tracking.MlflowClient()
-    experiment = mlflow.get_experiment_by_name("dsl-performance-prediction")
+    experiment = mlflow.get_experiment_by_name("palladio-approximation")
 
     if experiment is None:
         print("No MLflow experiment found.")
@@ -1202,7 +1203,7 @@ def visualize_performance_context(
     client = mlflow.tracking.MlflowClient()
 
     # Get experiment
-    experiment = mlflow.get_experiment_by_name("dsl-performance-prediction")
+    experiment = mlflow.get_experiment_by_name("palladio-approximation")
 
     if experiment is None:
         print("No MLflow experiment found.")

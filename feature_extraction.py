@@ -1,46 +1,21 @@
-from sklearn.feature_extraction.text import TfidfVectorizer
-import numpy as np
-from transformers import (
-    AutoTokenizer,
-    AutoModel,
-    logging,
-    AutoModelForCausalLM,
-    BitsAndBytesConfig,
-)
-import torch
-from tqdm import tqdm
-import warnings
-import os
-import re
-import gc
-import json
-import glob
-from pathlib import Path
-from dataset import load_dataset
-
-# Set tokenizers parallelism explicitly before import/usage
-# This prevents the warning when using DataLoader with num_workers > 0
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
 """
 Feature extraction module for Palladio Approximator.
 
-This module provides functions for generating feature vectors from DSL models using 
+This module provides functions for generating feature vectors from DSL models using
 various embedding techniques:
 
 1. TF-IDF: Fast, sparse embeddings suitable for many machine learning models
 2. BERT: Deep contextual embeddings using a pre-trained transformer model
 3. LLaMA: State-of-the-art embeddings using large language models
 
-The module now supports pre-computed LLaMA embeddings to address memory issues
+The module supports pre-computed LLaMA embeddings to address memory issues
 with large models. When using LLaMA embeddings, the module will:
 
 1. Check for pre-computed embeddings in the specified directory
 2. Use pre-computed embeddings when available
 3. Fall back to on-the-fly generation for samples without pre-computed embeddings
-4. Maintain API compatibility with the rest of the codebase
 
-Pre-computed embeddings are generated using the precompute_llama_embeddings.py script, 
+Pre-computed embeddings are generated using the precompute_llama_embeddings.py script,
 which efficiently generates and saves embeddings for multiple DSL files in batches.
 
 To use pre-computed embeddings:
@@ -52,228 +27,23 @@ Pre-computed embeddings are stored in the 'features/llama_embeddings' directory 
 and can be configured using the 'precomputed_embeddings_dir' parameter.
 """
 
-# Import the structured feature extraction module
-# Add this at the top of your feature_extraction.py file
-from structured_features import (
-    extract_structured_features,
-    combine_structured_and_embedded_features,
+from sklearn.feature_extraction.text import TfidfVectorizer
+import numpy as np
+from transformers import (
+    AutoTokenizer,
+    AutoModel,
+    AutoModelForCausalLM,
+    BitsAndBytesConfig,
 )
-
-
-# Then modify the existing build_tfidf_features function to include structured features
-def build_hybrid_tfidf_features(
-    train_samples,
-    val_samples,
-    test_samples,
-    max_features=None,
-    apply_truncated_svd=True,
-    n_components=2000,
-    use_structured_features=True,
-):
-    """
-    Builds hybrid features combining TF-IDF and structured architectural features.
-
-    Args:
-        train_samples: Training data samples (DataFrame)
-        val_samples: Validation data samples (DataFrame)
-        test_samples: Test data samples (DataFrame)
-        max_features: Maximum number of features to extract with TF-IDF
-        apply_truncated_svd: Whether to apply dimensionality reduction
-        n_components: Number of components to keep if using SVD
-        use_structured_features: Whether to include structured features
-
-    Returns:
-        X_train, y_train, X_val, y_val, X_test, y_test, embedding_model
-    """
-    # First build the TF-IDF features using the existing function
-    X_train, y_train, X_val, y_val, X_test, y_test, embedding_model = (
-        build_tfidf_features(
-            train_samples,
-            val_samples,
-            test_samples,
-            max_features=max_features,
-            apply_truncated_svd=apply_truncated_svd,
-            n_components=n_components,
-        )
-    )
-
-    if not use_structured_features:
-        return X_train, y_train, X_val, y_val, X_test, y_test, embedding_model
-
-    print("Adding structured architectural features...")
-
-    # Extract train texts
-    train_texts = train_samples["tpcm_text"].tolist()
-    val_texts = val_samples["tpcm_text"].tolist()
-    test_texts = test_samples["tpcm_text"].tolist()
-
-    # Extract structured features for each set
-    train_structured = [extract_structured_features(text) for text in train_texts]
-    val_structured = [extract_structured_features(text) for text in val_texts]
-    test_structured = [extract_structured_features(text) for text in test_texts]
-
-    # Ensure all structured feature dictionaries have the same keys
-    all_keys = set()
-    for features in train_structured + val_structured + test_structured:
-        all_keys.update(features.keys())
-
-    feature_keys = sorted(list(all_keys))
-
-    # Convert to array format
-    def dict_to_array(feature_dicts, keys):
-        arrays = []
-        for features in feature_dicts:
-            # Ensure all features have the same keys in the same order
-            feat_array = [features.get(key, 0) for key in keys]
-            arrays.append(feat_array)
-        return np.array(arrays)
-
-    train_struct_array = dict_to_array(train_structured, feature_keys)
-    val_struct_array = dict_to_array(val_structured, feature_keys)
-    test_struct_array = dict_to_array(test_structured, feature_keys)
-
-    print(f"Structured features shape: {train_struct_array.shape}")
-
-    # Combine with TF-IDF features
-    from scipy import sparse
-
-    # Check if TF-IDF features are sparse
-    if hasattr(X_train, "toarray"):
-        # Convert structured to sparse and combine
-        train_struct_sparse = sparse.csr_matrix(train_struct_array)
-        val_struct_sparse = sparse.csr_matrix(val_struct_array)
-        test_struct_sparse = sparse.csr_matrix(test_struct_array)
-
-        X_train_combined = sparse.hstack([train_struct_sparse, X_train])
-        X_val_combined = sparse.hstack([val_struct_sparse, X_val])
-        X_test_combined = sparse.hstack([test_struct_sparse, X_test])
-    else:
-        # For dense arrays, use numpy concatenation
-        X_train_combined = np.concatenate([train_struct_array, X_train], axis=1)
-        X_val_combined = np.concatenate([val_struct_array, X_val], axis=1)
-        X_test_combined = np.concatenate([test_struct_array, X_test], axis=1)
-
-    print(f"Combined features shape: {X_train_combined.shape}")
-
-    # Create a combined embedding model that includes structured feature extraction
-    combined_model = {
-        "tfidf_model": embedding_model,
-        "structured_keys": feature_keys,
-        "combined": True,
-    }
-
-    return (
-        X_train_combined,
-        y_train,
-        X_val_combined,
-        y_val,
-        X_test_combined,
-        y_test,
-        combined_model,
-    )
-
-
-# Also modify the BERT features function to include structured features
-def build_hybrid_bert_features(
-    train_samples,
-    val_samples,
-    test_samples,
-    model_name="microsoft/codebert-base",
-    device="cpu",
-    batch_size=32,
-    use_structured_features=True,
-):
-    """
-    Builds hybrid features combining BERT embeddings and structured architectural features.
-
-    Args:
-        train_samples: Training data samples (DataFrame)
-        val_samples: Validation data samples (DataFrame)
-        test_samples: Test data samples (DataFrame)
-        model_name: Name of the pretrained model to use
-        device: Device to run inference on
-        batch_size: Batch size for processing
-        use_structured_features: Whether to include structured features
-
-    Returns:
-        X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model
-    """
-    # First build the BERT features using the existing function
-    X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model = (
-        build_bert_features(
-            train_samples,
-            val_samples,
-            test_samples,
-            model_name=model_name,
-            device=device,
-            batch_size=batch_size,
-        )
-    )
-
-    if not use_structured_features:
-        return X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model
-
-    print("Adding structured architectural features...")
-
-    # Extract train texts
-    train_texts = train_samples["tpcm_text"].tolist()
-    val_texts = val_samples["tpcm_text"].tolist()
-    test_texts = test_samples["tpcm_text"].tolist()
-
-    # Extract structured features for each set
-    train_structured = [extract_structured_features(text) for text in train_texts]
-    val_structured = [extract_structured_features(text) for text in val_texts]
-    test_structured = [extract_structured_features(text) for text in test_texts]
-
-    # Ensure all structured feature dictionaries have the same keys
-    all_keys = set()
-    for features in train_structured + val_structured + test_structured:
-        all_keys.update(features.keys())
-
-    feature_keys = sorted(list(all_keys))
-
-    # Convert to array format
-    def dict_to_array(feature_dicts, keys):
-        arrays = []
-        for features in feature_dicts:
-            # Ensure all features have the same keys in the same order
-            feat_array = [features.get(key, 0) for key in keys]
-            arrays.append(feat_array)
-        return np.array(arrays)
-
-    train_struct_array = dict_to_array(train_structured, feature_keys)
-    val_struct_array = dict_to_array(val_structured, feature_keys)
-    test_struct_array = dict_to_array(test_structured, feature_keys)
-
-    print(f"Structured features shape: {train_struct_array.shape}")
-
-    # Combine with BERT features (which are always dense)
-    X_train_combined = np.concatenate([train_struct_array, X_train], axis=1)
-    X_val_combined = np.concatenate([val_struct_array, X_val], axis=1)
-    X_test_combined = np.concatenate([test_struct_array, X_test], axis=1)
-
-    print(f"Combined features shape: {X_train_combined.shape}")
-
-    # Create a combined model wrapper that includes structured feature extraction info
-    embedding_model = (
-        tokenizer,
-        model,
-        {"structured_keys": feature_keys, "combined": True},
-    )
-
-    return (
-        X_train_combined,
-        y_train,
-        X_val_combined,
-        y_val,
-        X_test_combined,
-        y_test,
-        embedding_model,
-    )
-
-
-# To make it easy to use the new hybrid features, update the extract_features function
-# This modified version of extract_features should be used to replace the existing one
+import torch
+from tqdm import tqdm
+import os
+import re
+import gc
+import json
+import glob
+from pathlib import Path
+from dataset import load_dataset
 
 
 def extract_features(args, device):
@@ -296,12 +66,7 @@ def extract_features(args, device):
     print(f"Dataset loaded. Train samples: {len(train_samples)}")
 
     # Feature extraction
-    print(
-        f"Building features using {args.embedding} embedding (with structured features)..."
-    )
-
-    # Check if we should use hybrid features with structured architecture information
-    use_structured = getattr(args, "use_structured_features", True)
+    print(f"Building features using {args.embedding} embedding...")
 
     # Check if we should use pre-computed embeddings
     use_precomputed_embeddings = getattr(args, "use_precomputed_embeddings", True)
@@ -321,32 +86,24 @@ def extract_features(args, device):
             apply_truncated_svd = True
 
         X_train, y_train, X_val, y_val, X_test, y_test, embedding_model = (
-            build_hybrid_tfidf_features(
+            build_tfidf_features(
                 train_samples,
                 val_samples,
                 test_samples,
                 max_features=max_features,
                 apply_truncated_svd=apply_truncated_svd,
                 n_components=n_components,
-                use_structured_features=use_structured,
             )
         )
 
     elif args.embedding == "bert":
         print(f"Using device: {device}")
         X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model = (
-            build_hybrid_bert_features(
-                train_samples,
-                val_samples,
-                test_samples,
-                device=device,
-                use_structured_features=use_structured,
-            )
+            build_bert_features(train_samples, val_samples, test_samples, device=device)
         )
         embedding_model = (tokenizer, model)
 
     elif args.embedding == "llama":
-        # For LLaMA, we would need a similar hybrid approach
         device = "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
         if device != "cuda":
             print("WARNING: Llama models require CUDA. Forcing CUDA if available.")
@@ -357,7 +114,6 @@ def extract_features(args, device):
             args.llama_model if args.llama_model else "codellama/CodeLlama-7b-hf"
         )
 
-        # First get the base LLaMA features, with potential pre-computed embeddings
         X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model = (
             build_llama_features(
                 train_samples,
@@ -375,69 +131,11 @@ def extract_features(args, device):
             )
         )
 
-        if use_structured:
-            print("Adding structured architectural features...")
-
-            # Extract train texts
-            train_texts = train_samples["tpcm_text"].tolist()
-            val_texts = val_samples["tpcm_text"].tolist()
-            test_texts = test_samples["tpcm_text"].tolist()
-
-            # Extract structured features for each set
-            train_structured = [
-                extract_structured_features(text) for text in train_texts
-            ]
-            val_structured = [extract_structured_features(text) for text in val_texts]
-            test_structured = [extract_structured_features(text) for text in test_texts]
-
-            # Ensure all structured feature dictionaries have the same keys
-            all_keys = set()
-            for features in train_structured + val_structured + test_structured:
-                all_keys.update(features.keys())
-
-            feature_keys = sorted(list(all_keys))
-
-            # Convert to array format
-            def dict_to_array(feature_dicts, keys):
-                arrays = []
-                for features in feature_dicts:
-                    # Ensure all features have the same keys in the same order
-                    feat_array = [features.get(key, 0) for key in keys]
-                    arrays.append(feat_array)
-                return np.array(arrays)
-
-            train_struct_array = dict_to_array(train_structured, feature_keys)
-            val_struct_array = dict_to_array(val_structured, feature_keys)
-            test_struct_array = dict_to_array(test_structured, feature_keys)
-
-            print(f"Structured features shape: {train_struct_array.shape}")
-
-            # Combine with LLaMA features (which are dense)
-            X_train = np.concatenate([train_struct_array, X_train], axis=1)
-            X_val = np.concatenate([val_struct_array, X_val], axis=1)
-            X_test = np.concatenate([test_struct_array, X_test], axis=1)
-
-            print(f"Combined features shape: {X_train.shape}")
-
-            # Add structured feature info to embedding model
-            # Handle different types of embedding models returned by build_llama_features
-            if isinstance(model, dict) and model.get("precomputed", False):
-                # For a pre-computed model dict, add structured feature info
-                model.update({"structured_keys": feature_keys, "combined": True})
-                embedding_model = (tokenizer, model)
-            else:
-                # For a standard model, use the tuple with structured info
-                embedding_model = (
-                    tokenizer,
-                    model,
-                    {"structured_keys": feature_keys, "combined": True},
-                )
+        # Set embedding model
+        if isinstance(model, dict) and model.get("precomputed", False):
+            embedding_model = (tokenizer, model)
         else:
-            # Just use the model as is
-            if isinstance(model, dict) and model.get("precomputed", False):
-                embedding_model = (tokenizer, model)
-            else:
-                embedding_model = (tokenizer, model)
+            embedding_model = (tokenizer, model)
 
         print("Feature extraction completed successfully")
         print(f"Feature shapes: X_train={X_train.shape}, y_train={y_train.shape}")
@@ -493,8 +191,6 @@ def build_tfidf_features(
 
     # Create a high-quality TF-IDF vectorizer
     # - sublinear_tf: Apply sublinear scaling (logarithmic) to term frequencies
-    # - min_df: Ignore terms that appear in less than 3 documents
-    # - max_df: Ignore terms that appear in more than 95% of documents (likely boilerplate)
     # - norm: L2 normalization of vectors for better numerical stability
     # - use_idf: Apply inverse document frequency weighting
     # - smooth_idf: Add 1 to document frequencies to prevent division by zero
@@ -502,8 +198,6 @@ def build_tfidf_features(
     vectorizer = TfidfVectorizer(
         max_features=max_features,
         sublinear_tf=True,
-        min_df=3,
-        max_df=0.95,
         norm="l2",
         use_idf=True,
         smooth_idf=True,
@@ -1603,11 +1297,10 @@ def build_bert_features(
     test_samples,
     model_name="microsoft/codebert-base",
     device="cpu",
-    batch_size=32,  # Increased for RTX 3090
+    batch_size=32,
 ):
     """
     Builds BERT embeddings and target arrays from dataset samples.
-    Optimized for RTX 3090 GPU.
 
     Args:
         train_samples: Training data samples (DataFrame)
@@ -1615,12 +1308,11 @@ def build_bert_features(
         test_samples: Test data samples (DataFrame)
         model_name: Name of the pretrained model to use
         device: Device to run inference on ('cpu' or 'cuda')
-        batch_size: Batch size for processing (32 is optimal for RTX 3090)
+        batch_size: Batch size for processing
 
     Returns:
         X_train, y_train, X_val, y_val, X_test, y_test, tokenizer, model
     """
-    # Set torch to use higher precision operations for better embedding quality
     if device == "cuda":
         # Try to optimize CUDA operations
         if torch.cuda.is_available():
@@ -1694,12 +1386,9 @@ def build_bert_features(
     sliding_window_overlap = 50  # Token overlap between chunks to maintain context
     max_chunks_per_doc = 30  # Allow more chunks for very long documents (~15000 tokens)
 
-    # Worker initialization and multiprocess handling is now handled at the module level
-    # with the os.environ["TOKENIZERS_PARALLELISM"] = "false" setting
-
     def encode_with_chunks(df):
         """
-        Encode text with a smart chunking approach optimized for RTX 3090.
+        Encode text with a smart chunking approach.
         Uses batch processing and half-precision for better performance.
         """
         texts = df["tpcm_text"].tolist()

@@ -15,7 +15,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, default="data")
     parser.add_argument(
-        "--model", type=str, choices=["rf", "ridge", "lasso", "torch"], default="rf"
+        "--model", type=str, choices=["rf", "ridge", "lasso", "torch"], default="torch"
     )
     parser.add_argument(
         "--embedding",
@@ -76,7 +76,7 @@ def parse_args():
         choices=["summary"],
         default="summary",
     )
-    
+
     # Model hyperparameters
     parser.add_argument("--n_estimators", type=int, default=100)
     parser.add_argument("--alpha", type=float, default=1.0)
@@ -84,7 +84,7 @@ def parse_args():
     # PyTorch model parameters
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=64)
-    
+
     # Hyperparameter optimization parameters
     parser.add_argument(
         "--optimize_hyperparameters",
@@ -138,40 +138,27 @@ def parse_args():
     parser.add_argument(
         "--no_mlflow", dest="use_mlflow", action="store_false", help="Disable MLflow"
     )
-    
+
     # Add no_ version for dataset loading options
     parser.add_argument(
         "--no_save_dataset",
-        dest="save_dataset", 
+        dest="save_dataset",
         action="store_false",
-        help="Don't save the dataset splits to disk after loading"
+        help="Don't save the dataset splits to disk after loading",
     )
     parser.add_argument(
         "--no_load_dataset",
-        dest="load_dataset", 
+        dest="load_dataset",
         action="store_false",
-        help="Don't load the dataset splits from disk (regenerate)"
+        help="Don't load the dataset splits from disk (regenerate)",
     )
 
-    # Add this new argument for structured features
-    parser.add_argument(
-        "--use_structured_features",
-        action="store_true",
-        help="Use structured architectural features in addition to embeddings",
-    )
-    parser.add_argument(
-        "--no_structured_features",
-        dest="use_structured_features",
-        action="store_false",
-        help="Disable structured architectural features extraction",
-    )
     parser.set_defaults(
         use_cuda=True,
         use_mlflow=True,
         use_gpu=True,
         save_features=True,
         load_features=False,
-        use_structured_features=True,
         save_dataset=True,
         load_dataset=True,
         use_precomputed_embeddings=True,
@@ -187,6 +174,10 @@ def parse_args():
 
 def setup_environment():
     """Set up environment variables and initial configuration."""
+    # Set memory-efficient PyTorch configuration
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = (
+        "expandable_segments:True,max_split_size_mb:512"
+    )
     # Set tokenizers parallelism explicitly to prevent warnings with multiprocessing
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -214,14 +205,14 @@ def get_checkpoint_paths(args):
     Returns:
         tuple: (feature_checkpoint_path, embedding_model_path)
     """
-    checkpoint_path = (
+    feature_path = (
         f"features/{args.embedding}_{args.prediction_mode}_features_checkpoint.pkl"
     )
     embedding_model_path = (
         f"embeddings/{args.embedding}_{args.prediction_mode}_embedding.pkl"
     )
 
-    return checkpoint_path, embedding_model_path
+    return feature_path, embedding_model_path
 
 
 def get_model_path(args, experiment_id=None):
