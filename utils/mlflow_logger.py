@@ -1,7 +1,3 @@
-"""
-MLflow integration module for experiment tracking.
-"""
-
 import os
 import mlflow
 import mlflow.sklearn
@@ -14,9 +10,6 @@ def setup_mlflow(experiment_name="palladio-approximation"):
     Args:
         experiment_name (str): Name of the experiment
     """
-    # Import mlflow again to avoid scoping issues
-    import mlflow
-
     print("Setting up MLflow...")
     mlflow.set_experiment(experiment_name)
     mlflow.start_run()
@@ -28,9 +21,6 @@ def log_common_parameters(args):
     Args:
         args: Command line arguments
     """
-    # Import mlflow again to avoid scoping issues
-    import mlflow
-
     # Log common parameters for all models
     params = {
         "model": args.model,
@@ -69,7 +59,7 @@ def log_common_parameters(args):
     elif args.model == "torch":
         params.update(
             {
-                "model_type": "torch",  # For compatibility with visualize_training_metrics
+                "model_type": "torch",
                 "epochs": args.epochs,
                 "batch_size": args.batch_size,
             }
@@ -105,9 +95,6 @@ def log_torch_model_metrics(model):
     Args:
         model: Trained PyTorch model with training_metrics attribute
     """
-    # Import mlflow again to avoid scoping issues
-    import mlflow
-    import mlflow.pytorch
     import numpy as np
 
     if not hasattr(model, "training_metrics"):
@@ -190,9 +177,6 @@ def log_torch_model_metrics(model):
             try:
                 # Use native PyTorch model logging with proper error handling
                 mlflow.pytorch.log_model(pytorch_model, "pytorch_model")
-
-                # No need to log the saved file separately
-                # The model is already saved as an MLflow artifact
             except Exception as e:
                 # Provide more detailed error message
                 mlflow.log_param("model_logging_error", str(e))
@@ -214,26 +198,39 @@ def log_evaluation_results(
     X_val=None,
     y_val=None,
 ):
-    """Log evaluation results to MLflow.
+    """Log evaluation results to MLflow, handling both old dict format and new EvaluationResults.
 
     Args:
-        val_results (dict): Validation evaluation metrics
-        test_results (dict): Test evaluation metrics
+        val_results: Validation evaluation metrics (dict or EvaluationResults)
+        test_results: Test evaluation metrics (dict or EvaluationResults)
         model: Trained model object to log
         model_path (str, optional): Path to the saved model for artifact logging
         X_train, y_train: Training data (for baseline calculation)
         X_val, y_val: Validation data (for context metrics)
     """
-    # Import mlflow again to avoid scoping issues
-    import mlflow
-    import mlflow.sklearn
-    import os
     import numpy as np
+    import os
 
     try:
+        # Convert EvaluationResults to dictionaries if needed
+        val_metrics = _extract_metrics(val_results)
+        test_metrics = _extract_metrics(test_results)
+
         # Log the evaluation metrics
-        mlflow.log_metrics(val_results)
-        mlflow.log_metrics(test_results)
+        mlflow.log_metrics(val_metrics)
+        mlflow.log_metrics(test_metrics)
+
+        # Log confidence intervals if available
+        if (
+            hasattr(val_results, "confidence_intervals")
+            and val_results.confidence_intervals
+        ):
+            _log_confidence_intervals(val_results.confidence_intervals, "val")
+        if (
+            hasattr(test_results, "confidence_intervals")
+            and test_results.confidence_intervals
+        ):
+            _log_confidence_intervals(test_results.confidence_intervals, "test")
 
         # Log the model as an artifact if path is provided
         if model_path and os.path.exists(model_path):
@@ -254,193 +251,214 @@ def log_evaluation_results(
             and y_val is not None
             and model is not None
         ):
-            from utils.metrics_context import (
-                get_baseline_metrics,
-                calculate_normalized_metrics,
-            )
-            from utils.metrics_context import (
-                create_metrics_interpretation,
-                create_performance_visualization,
-            )
-            import os
-            import tempfile
-            import json
-            import numpy as np
+            _log_context_metrics(model, X_train, y_train, X_val, y_val, val_metrics)
 
-            # Calculate baseline metrics
-            baseline_metrics = get_baseline_metrics(X_train, y_train, X_val, y_val)
-
-            # Log baseline metrics
-            for key, value in baseline_metrics.items():
-                if isinstance(value, list):
-                    for i, v in enumerate(value):
-                        mlflow.log_metric(f"{key}_{i}", v)
-                else:
-                    mlflow.log_metric(key, value)
-
-            # Calculate target statistics
-            target_stats = {}
-            if len(y_val.shape) > 1 and y_val.shape[1] > 1:
-                # Multi-output case
-                target_stats["mean"] = np.mean(y_val, axis=0).tolist()
-                target_stats["median"] = np.median(y_val, axis=0).tolist()
-                target_stats["std"] = np.std(y_val, axis=0).tolist()
-                target_stats["variance"] = np.var(y_val, axis=0).tolist()
-            else:
-                # Single output case
-                target_stats["mean"] = float(np.mean(y_val))
-                target_stats["median"] = float(np.median(y_val))
-                target_stats["std"] = float(np.std(y_val))
-                target_stats["variance"] = float(np.var(y_val))
-
-            # Log target statistics
-            mlflow.log_params(
-                {f"target_stat_{k}": str(v) for k, v in target_stats.items()}
-            )
-
-            # Calculate prediction errors for validation set
-            predictions = model.predict(X_val)
-
-            # Filter out extreme outliers from errors to avoid visualization issues
-            if len(y_val.shape) > 1 and y_val.shape[1] > 1:
-                # Take first output dimension for visualization - multi-output case
-                raw_errors = predictions[:, 0] - y_val[:, 0]
-            else:
-                # Single output case
-                raw_errors = predictions.flatten() - y_val.flatten()
-
-            # Apply outlier filtering - values more than 5 std from mean will be capped
-            error_mean = np.mean(raw_errors)
-            error_std = np.std(raw_errors)
-            lower_bound = error_mean - 5 * error_std
-            upper_bound = error_mean + 5 * error_std
-            errors = np.clip(raw_errors, lower_bound, upper_bound)
-
-            # Add the actual val metrics to the model_metrics instead of just using val_results
-            # which might have non-standard naming conventions
-            multi_output = len(y_val.shape) > 1 and y_val.shape[1] > 1
-
-            if multi_output:
-                # Calculate MSE for each output dimension
-                mse = np.mean((y_val - predictions) ** 2, axis=0)
-                mae = np.mean(np.abs(y_val - predictions), axis=0)
-
-                # Convert to list if numpy array
-                if hasattr(mse, "tolist"):
-                    mse = mse.tolist()
-                if hasattr(mae, "tolist"):
-                    mae = mae.tolist()
-            else:
-                # Single output case
-                mse = np.mean((y_val.flatten() - predictions.flatten()) ** 2)
-                mae = np.mean(np.abs(y_val.flatten() - predictions.flatten()))
-
-            # Create a more complete model_metrics with correct keys
-            model_metrics = {
-                "val_mse": mse,
-                "val_mae": mae,
-                "prediction_errors": errors,
-            }
-
-            # Also add all metrics from val_results if they're available
-            model_metrics.update(val_results)
-
-            # Create metrics interpretation
-            interpretation = create_metrics_interpretation(
-                model_metrics, baseline_metrics, target_stats
-            )
-
-            # Save interpretation to a file and log as artifact
-            with tempfile.TemporaryDirectory() as tmpdir:
-                # Save interpretation as JSON
-                interp_path = os.path.join(tmpdir, "metrics_interpretation.json")
-                with open(interp_path, "w") as f:
-                    json.dump(interpretation, f, indent=2)
-
-                # Log interpretation file
-                mlflow.log_artifact(interp_path)
-
-                # Create performance visualizations and log them
-                viz_dir = os.path.join(tmpdir, "performance_context")
-                viz_paths = create_performance_visualization(
-                    model_metrics, baseline_metrics, target_stats, viz_dir
-                )
-
-                # Log all visualizations
-                for viz_path in viz_paths:
-                    mlflow.log_artifact(viz_path)
-
-                # Create a markdown summary for easy viewing
-                summary_path = os.path.join(tmpdir, "performance_summary.md")
-                with open(summary_path, "w") as f:
-                    f.write("# Model Performance Summary\n\n")
-
-                    f.write("## Overall Assessment\n\n")
-                    f.write(interpretation["performance_summary"])
-                    f.write("\n\n")
-
-                    f.write("## Metrics Context\n\n")
-                    for metric, info in interpretation["metrics_context"].items():
-                        # Check if info is a dictionary before proceeding
-                        if not isinstance(info, dict):
-                            continue
-
-                        f.write(f"### {metric}\n")
-
-                        # Only include value if it exists
-                        if "value" in info and info["value"] is not None:
-                            f.write(f"- Value: {info['value']}\n")
-
-                        # Include available baselines and other metrics
-                        for key, val in info.items():
-                            if key != "interpretation" and key != "value":
-                                f.write(f"- {key}: {val}\n")
-
-                        # Add interpretation
-                        if "interpretation" in info:
-                            f.write(f"- **Interpretation**: {info['interpretation']}\n")
-
-                        f.write("\n")
-
-                    f.write("## Domain-Specific Interpretation\n\n")
-                    if interpretation["domain_interpretation"]:
-                        for key, val in interpretation["domain_interpretation"].items():
-                            f.write(f"### {key}\n")
-                            f.write(f"{val}\n\n")
-                    else:
-                        f.write("No domain-specific interpretation available.\n\n")
-
-                # Log summary markdown
-                mlflow.log_artifact(summary_path)
-
-                # Also add key interpretation as run tags for easy filtering/searching
-                try:
-                    if (
-                        "performance_summary" in interpretation
-                        and interpretation["performance_summary"]
-                    ):
-                        summary = interpretation["performance_summary"]
-                        if "shows " in summary and " performance" in summary:
-                            level = summary.split("shows ")[1].split(" performance")[0]
-                            mlflow.set_tag("performance_level", level)
-                        else:
-                            # Use a generic tag instead
-                            mlflow.set_tag("performance_summary_available", "true")
-                except Exception as e:
-                    print(
-                        f"Warning: Could not extract performance level for tagging: {e}"
-                    )
     except Exception as e:
         # Log any errors that occur during metric processing
-        print(f"ERROR: {e}")
+        print(f"ERROR in MLflow logging: {e}")
         import traceback
 
         traceback.print_exc()
+        mlflow.log_param("logging_error", str(e))
+
+
+def _extract_metrics(results):
+    """Extract metrics dictionary from results (handles both old and new format)."""
+    if hasattr(results, "metrics"):
+        return results.metrics
+    elif isinstance(results, dict):
+        return results
+    else:
+        raise ValueError(f"Cannot extract metrics from {type(results)}")
+
+
+def _log_confidence_intervals(confidence_intervals, split_name):
+    """Log confidence intervals as separate metrics."""
+    for metric_name, (ci_lower, ci_upper) in confidence_intervals.items():
+        # Log CI bounds
+        mlflow.log_metric(f"{metric_name}_ci_lower", ci_lower)
+        mlflow.log_metric(f"{metric_name}_ci_upper", ci_upper)
+        # Log CI width
+        ci_width = ci_upper - ci_lower
+        mlflow.log_metric(f"{metric_name}_ci_width", ci_width)
+
+
+def _log_context_metrics(model, X_train, y_train, X_val, y_val, val_metrics):
+    """Log context metrics including baselines and interpretations."""
+    from utils.metrics_context import (
+        get_baseline_metrics,
+        create_metrics_interpretation,
+        create_performance_visualization,
+    )
+    import tempfile
+    import json
+    import numpy as np
+
+    try:
+        # Calculate baseline metrics
+        baseline_metrics = get_baseline_metrics(X_train, y_train, X_val, y_val)
+
+        # Log baseline metrics
+        for key, value in baseline_metrics.items():
+            if isinstance(value, list):
+                for i, v in enumerate(value):
+                    mlflow.log_metric(f"{key}_{i}", v)
+            else:
+                mlflow.log_metric(key, value)
+
+        # Calculate target statistics
+        target_stats = {}
+        if len(y_val.shape) > 1 and y_val.shape[1] > 1:
+            # Multi-output case
+            target_stats["mean"] = np.mean(y_val, axis=0).tolist()
+            target_stats["median"] = np.median(y_val, axis=0).tolist()
+            target_stats["std"] = np.std(y_val, axis=0).tolist()
+            target_stats["variance"] = np.var(y_val, axis=0).tolist()
+        else:
+            # Single output case
+            target_stats["mean"] = float(np.mean(y_val))
+            target_stats["median"] = float(np.median(y_val))
+            target_stats["std"] = float(np.std(y_val))
+            target_stats["variance"] = float(np.var(y_val))
+
+        # Log target statistics
+        mlflow.log_params({f"target_stat_{k}": str(v) for k, v in target_stats.items()})
+
+        # Calculate prediction errors for validation set
+        predictions = model.predict(X_val)
+
+        # Filter out extreme outliers from errors to avoid visualization issues
+        if len(y_val.shape) > 1 and y_val.shape[1] > 1:
+            # Take first output dimension for visualization - multi-output case
+            raw_errors = predictions[:, 0] - y_val[:, 0]
+        else:
+            # Single output case
+            raw_errors = predictions.flatten() - y_val.flatten()
+
+        # Apply outlier filtering - values more than 5 std from mean will be capped
+        error_mean = np.mean(raw_errors)
+        error_std = np.std(raw_errors)
+        lower_bound = error_mean - 5 * error_std
+        upper_bound = error_mean + 5 * error_std
+        errors = np.clip(raw_errors, lower_bound, upper_bound)
+
+        # Create model_metrics for interpretation
+        multi_output = len(y_val.shape) > 1 and y_val.shape[1] > 1
+
+        if multi_output:
+            # Calculate MSE for each output dimension
+            mse = np.mean((y_val - predictions) ** 2, axis=0)
+            mae = np.mean(np.abs(y_val - predictions), axis=0)
+
+            # Convert to list if numpy array
+            if hasattr(mse, "tolist"):
+                mse = mse.tolist()
+            if hasattr(mae, "tolist"):
+                mae = mae.tolist()
+        else:
+            # Single output case
+            mse = np.mean((y_val.flatten() - predictions.flatten()) ** 2)
+            mae = np.mean(np.abs(y_val.flatten() - predictions.flatten()))
+
+        # Create a more complete model_metrics with correct keys
+        model_metrics = {
+            "val_mse": mse,
+            "val_mae": mae,
+            "prediction_errors": errors,
+        }
+
+        # Also add all metrics from val_metrics if they're available
+        model_metrics.update(val_metrics)
+
+        # Create metrics interpretation
+        interpretation = create_metrics_interpretation(
+            model_metrics, baseline_metrics, target_stats
+        )
+
+        # Save interpretation to a file and log as artifact
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Save interpretation as JSON
+            interp_path = os.path.join(tmpdir, "metrics_interpretation.json")
+            with open(interp_path, "w") as f:
+                json.dump(interpretation, f, indent=2)
+
+            # Log interpretation file
+            mlflow.log_artifact(interp_path)
+
+            # Create performance visualizations and log them
+            viz_dir = os.path.join(tmpdir, "performance_context")
+            viz_paths = create_performance_visualization(
+                model_metrics, baseline_metrics, target_stats, viz_dir
+            )
+
+            # Log all visualizations
+            for viz_path in viz_paths:
+                mlflow.log_artifact(viz_path)
+
+            # Create a markdown summary for easy viewing
+            summary_path = os.path.join(tmpdir, "performance_summary.md")
+            with open(summary_path, "w") as f:
+                f.write("# Model Performance Summary\n\n")
+
+                f.write("## Overall Assessment\n\n")
+                f.write(interpretation["performance_summary"])
+                f.write("\n\n")
+
+                f.write("## Metrics Context\n\n")
+                for metric, info in interpretation["metrics_context"].items():
+                    # Check if info is a dictionary before proceeding
+                    if not isinstance(info, dict):
+                        continue
+
+                    f.write(f"### {metric}\n")
+
+                    # Only include value if it exists
+                    if "value" in info and info["value"] is not None:
+                        f.write(f"- Value: {info['value']}\n")
+
+                    # Include available baselines and other metrics
+                    for key, val in info.items():
+                        if key != "interpretation" and key != "value":
+                            f.write(f"- {key}: {val}\n")
+
+                    # Add interpretation
+                    if "interpretation" in info:
+                        f.write(f"- **Interpretation**: {info['interpretation']}\n")
+
+                    f.write("\n")
+
+                f.write("## Domain-Specific Interpretation\n\n")
+                if interpretation["domain_interpretation"]:
+                    for key, val in interpretation["domain_interpretation"].items():
+                        f.write(f"### {key}\n")
+                        f.write(f"{val}\n\n")
+                else:
+                    f.write("No domain-specific interpretation available.\n\n")
+
+            # Log summary markdown
+            mlflow.log_artifact(summary_path)
+
+            # Also add key interpretation as run tags for easy filtering/searching
+            try:
+                if (
+                    "performance_summary" in interpretation
+                    and interpretation["performance_summary"]
+                ):
+                    summary = interpretation["performance_summary"]
+                    if "shows " in summary and " performance" in summary:
+                        level = summary.split("shows ")[1].split(" performance")[0]
+                        mlflow.set_tag("performance_level", level)
+                    else:
+                        # Use a generic tag instead
+                        mlflow.set_tag("performance_summary_available", "true")
+            except Exception as e:
+                print(f"Warning: Could not extract performance level for tagging: {e}")
+
+    except Exception as e:
+        print(f"Warning: Could not log context metrics: {e}")
+        mlflow.log_param("context_metrics_error", str(e))
 
 
 def end_mlflow_run():
     """End the current MLflow run."""
-    # Import mlflow again to avoid scoping issues
-    import mlflow
-
     mlflow.end_run()
