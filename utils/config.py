@@ -52,24 +52,7 @@ def parse_args():
         action="store_true",
         help="Use 4-bit quantization for LLaMA models (reduces memory usage by ~75%, recommended for 7B+ models)",
     )
-    # Pre-computed embeddings options
-    parser.add_argument(
-        "--use_precomputed_embeddings",
-        action="store_true",
-        help="Use pre-computed LLaMA embeddings when available (default: True)",
-    )
-    parser.add_argument(
-        "--no_precomputed_embeddings",
-        dest="use_precomputed_embeddings",
-        action="store_false",
-        help="Disable using pre-computed LLaMA embeddings",
-    )
-    parser.add_argument(
-        "--precomputed_embeddings_dir",
-        type=str,
-        default="features/llama_embeddings",
-        help="Directory containing pre-computed LLaMA embeddings",
-    )
+
     parser.add_argument(
         "--prediction_mode",
         type=str,
@@ -161,7 +144,6 @@ def parse_args():
         load_features=False,
         save_dataset=True,
         load_dataset=True,
-        use_precomputed_embeddings=True,
         optimize_hyperparameters=False,
     )
 

@@ -92,7 +92,7 @@ esac
 case $EMBEDDING in
 llama)
     # For LLaMA, use 4-bit quantization for memory efficiency
-    CMD="$CMD --use_4bit_llama --use_precomputed_embeddings"
+    CMD="$CMD --use_4bit_llama"
     ;;
 esac
 

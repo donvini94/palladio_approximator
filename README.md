@@ -105,21 +105,6 @@ python train.py --model rf --embedding tfidf
 python train.py --model rf --embedding tfidf --no_load_dataset --no_save_dataset
 ```
 
-### ➤ Using Pre-computed LLaMA Embeddings
-```bash
-# Step 1: Generate embeddings (only needed once)
-python precompute_llama_embeddings.py --input_dir data/dsl_models --output_dir features/llama_embeddings
-
-# Step 2: Train with pre-computed embeddings (enabled by default)
-python train.py --model rf --embedding llama
-
-# Disable pre-computed embeddings (generate on-the-fly)
-python train.py --model rf --embedding llama --no_precomputed_embeddings
-
-# Specify a different directory for pre-computed embeddings
-python train.py --model rf --embedding llama --precomputed_embeddings_dir my_custom_embeddings_dir
-```
-
 ### ➤ Using Docker
 ```bash
 ./run.sh train rf bert summary
