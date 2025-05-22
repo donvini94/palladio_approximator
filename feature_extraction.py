@@ -116,7 +116,6 @@ def build_tfidf_features(train_samples, val_samples, test_samples, args):
         "smooth_idf": True,  # Prevents division by zero
         "ngram_range": (1, 2),  # Unigrams + bigrams for local context
         "min_df": 2,  # Remove very rare terms (reduce noise)
-        "max_df": 0.95,  # Remove very common terms
     }
 
     print(f"Creating TF-IDF vectors with parameters: {tfidf_params}")
