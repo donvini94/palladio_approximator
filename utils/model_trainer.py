@@ -1,13 +1,9 @@
-"""
-Model training orchestration module.
-"""
-
 import time
 import joblib
 from models.rf_model import train_random_forest
 from models.linear_model import train_linear_model
 from models.torch_model import train_torch_regressor
-from evaluate import evaluate_model
+from evaluate import evaluate_model, results_to_dict
 from utils.config import get_device, get_model_path
 
 
@@ -106,10 +102,18 @@ def train_model(args, X_train, y_train, X_val, y_val, X_test, y_test):
 
     print(f"=== Model training completed at {time.strftime('%H:%M:%S')} ===")
 
-    # Evaluate the model
+    # Evaluate the model using enhanced evaluation
     print("Evaluating model...")
-    val_results = evaluate_model(model, X_val, y_val, split_name="val")
-    test_results = evaluate_model(model, X_test, y_test, split_name="test")
+
+    # Use enhanced evaluation with bootstrap confidence intervals
+    val_results = evaluate_model(
+        model, X_val, y_val, split_name="val", verbose=False, bootstrap_ci=True
+    )
+    test_results = evaluate_model(
+        model, X_test, y_test, split_name="test", verbose=True, bootstrap_ci=True
+    )
+
+    # For backward compatibility with MLflow logging, also provide dict versions
     print(f"Validation results: {val_results}")
     print(f"Test results: {test_results}")
 
