@@ -707,34 +707,160 @@ class ResidualBlock(nn.Module):
 
 
 class AttentionMLP(BaseRegressorNet):
-    """MLP with self-attention mechanism for feature importance."""
+    """MLP with simplified attention mechanism for feature importance."""
 
     def __init__(
         self,
         input_dim,
         output_dim,
         hidden_dims=[768, 512, 256],
-        num_heads=8,
         dropout_rate=0.3,
     ):
         super().__init__(input_dim, output_dim)
 
-        # Input projection to make input dimension divisible by num_heads
-        attention_dim = hidden_dims[0]
-        self.input_proj = nn.Linear(input_dim, attention_dim)
-
-        # Self-attention layer
-        self.attention = nn.MultiheadAttention(
-            embed_dim=attention_dim,
-            num_heads=num_heads,
-            dropout=dropout_rate,
-            batch_first=True,
+        # Feature attention mechanism - learns which features are important
+        self.feature_attention = nn.Sequential(
+            nn.Linear(input_dim, hidden_dims[0]),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate * 0.5),
+            nn.Linear(hidden_dims[0], input_dim),
+            nn.Sigmoid(),  # Attention weights between 0 and 1
         )
 
-        # Layer normalization
-        self.layer_norm = nn.LayerNorm(attention_dim)
+        # Feature transformation after attention
+        self.feature_transform = nn.Linear(input_dim, hidden_dims[0])
+        self.transform_norm = nn.BatchNorm1d(hidden_dims[0])
 
-        # Standard MLP layers after attention
+        # Standard MLP layers
+        self.mlp_layers = nn.ModuleList()
+        dims = hidden_dims
+        for i in range(len(dims) - 1):
+            self.mlp_layers.extend(
+                [
+                    nn.Linear(dims[i], dims[i + 1]),
+                    nn.ReLU(),
+                    nn.BatchNorm1d(dims[i + 1]),
+                    nn.Dropout(
+                        dropout_rate * (1 - 0.1 * i)
+                    ),  # Gradually decrease dropout
+                ]
+            )
+
+        # Output layer
+        self.output_layer = nn.Linear(hidden_dims[-1], output_dim)
+
+        self._init_weights()
+
+    def forward(self, x):
+        # Compute feature attention weights
+        attention_weights = self.feature_attention(x)  # [batch_size, input_dim]
+
+        # Apply attention to input features (element-wise multiplication)
+        attended_features = x * attention_weights
+
+        # Transform attended features
+        x_out = self.feature_transform(attended_features)
+        x_out = self.transform_norm(x_out)
+        x_out = F.relu(x_out)
+
+        # Standard MLP processing
+        for layer in self.mlp_layers:
+            x_out = layer(x_out)
+
+        return self.output_layer(x_out)
+
+
+class AttentionMLP(BaseRegressorNet):
+    """MLP with simplified attention mechanism for feature importance."""
+
+    def __init__(
+        self,
+        input_dim,
+        output_dim,
+        hidden_dims=[768, 512, 256],
+        dropout_rate=0.3,
+    ):
+        super().__init__(input_dim, output_dim)
+
+        # Feature attention mechanism - learns which features are important
+        self.feature_attention = nn.Sequential(
+            nn.Linear(input_dim, hidden_dims[0]),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate * 0.5),
+            nn.Linear(hidden_dims[0], input_dim),
+            nn.Sigmoid(),  # Attention weights between 0 and 1
+        )
+
+        # Feature transformation after attention
+        self.feature_transform = nn.Linear(input_dim, hidden_dims[0])
+        self.transform_norm = nn.BatchNorm1d(hidden_dims[0])
+
+        # Standard MLP layers
+        self.mlp_layers = nn.ModuleList()
+        dims = hidden_dims
+        for i in range(len(dims) - 1):
+            self.mlp_layers.extend(
+                [
+                    nn.Linear(dims[i], dims[i + 1]),
+                    nn.ReLU(),
+                    nn.BatchNorm1d(dims[i + 1]),
+                    nn.Dropout(
+                        dropout_rate * (1 - 0.1 * i)
+                    ),  # Gradually decrease dropout
+                ]
+            )
+
+        # Output layer
+        self.output_layer = nn.Linear(hidden_dims[-1], output_dim)
+
+        self._init_weights()
+
+    def forward(self, x):
+        # Compute feature attention weights
+        attention_weights = self.feature_attention(x)  # [batch_size, input_dim]
+
+        # Apply attention to input features (element-wise multiplication)
+        attended_features = x * attention_weights
+
+        # Transform attended features
+        x_out = self.feature_transform(attended_features)
+        x_out = self.transform_norm(x_out)
+        x_out = F.relu(x_out)
+
+        # Standard MLP processing
+        for layer in self.mlp_layers:
+            x_out = layer(x_out)
+
+        return self.output_layer(x_out)
+
+
+class ConvAttentionMLP(BaseRegressorNet):
+    """Alternative: MLP with convolutional attention mechanism."""
+
+    def __init__(
+        self,
+        input_dim,
+        output_dim,
+        hidden_dims=[768, 512, 256],
+        dropout_rate=0.3,
+    ):
+        super().__init__(input_dim, output_dim)
+
+        # 1D convolutional layers for spatial attention over features
+        self.conv_attention = nn.Sequential(
+            nn.Conv1d(1, 16, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv1d(16, 8, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv1d(8, 1, kernel_size=3, padding=1),
+            nn.Sigmoid(),
+        )
+
+        # Feature transformation
+        self.feature_transform = nn.Linear(input_dim, hidden_dims[0])
+        self.transform_norm = nn.BatchNorm1d(hidden_dims[0])
+
+        # Standard MLP layers
         self.mlp_layers = nn.ModuleList()
         dims = hidden_dims
         for i in range(len(dims) - 1):
@@ -755,36 +881,105 @@ class AttentionMLP(BaseRegressorNet):
     def forward(self, x):
         batch_size = x.size(0)
 
-        # Project input
-        x = self.input_proj(x)  # [batch_size, attention_dim]
+        # Apply convolutional attention
+        # Reshape to [batch_size, 1, input_dim] for 1D conv
+        x_conv = x.unsqueeze(1)
+        attention_weights = self.conv_attention(x_conv)
+        attention_weights = attention_weights.squeeze(1)  # [batch_size, input_dim]
 
-        # Reshape for attention (treat features as sequence)
-        # We'll split features into chunks for attention
-        chunk_size = 64  # Each chunk represents a "token"
-        num_chunks = x.size(1) // chunk_size
-        if num_chunks == 0:
-            num_chunks = 1
-            chunk_size = x.size(1)
+        # Apply attention to input
+        attended_features = x * attention_weights
 
-        # Reshape to [batch_size, num_chunks, chunk_size]
-        x_reshaped = x[:, : num_chunks * chunk_size].view(
-            batch_size, num_chunks, chunk_size
-        )
-
-        # Apply self-attention
-        attended, attention_weights = self.attention(x_reshaped, x_reshaped, x_reshaped)
-
-        # Layer normalization and residual connection
-        x_out = self.layer_norm(attended + x_reshaped)
-
-        # Flatten back to [batch_size, features]
-        x_out = x_out.view(batch_size, -1)
+        # Transform features
+        x_out = self.feature_transform(attended_features)
+        x_out = self.transform_norm(x_out)
+        x_out = F.relu(x_out)
 
         # Standard MLP processing
         for layer in self.mlp_layers:
             x_out = layer(x_out)
 
         return self.output_layer(x_out)
+
+
+def create_architecture(arch_type, input_dim, output_dim, **kwargs):
+    """Factory function to create different architectures."""
+
+    architectures = {
+        "standard": StandardMLP,
+        "residual": ResidualMLP,
+        "attention": AttentionMLP,
+        "conv_attention": ConvAttentionMLP,  # Alternative attention mechanism
+        "ensemble": EnsembleMLP,
+        "variational": VariationalMLP,
+        "adaptive": AdaptiveMLP,
+    }
+
+    if arch_type not in architectures:
+        raise ValueError(
+            f"Unknown architecture: {arch_type}. Available: {list(architectures.keys())}"
+        )
+
+    return architectures[arch_type](input_dim, output_dim, **kwargs)
+
+
+# Updated architecture-specific training parameters
+def get_architecture_specific_params(arch_type):
+    """Get recommended training parameters for each architecture."""
+
+    params = {
+        "standard": {
+            "learning_rate": 0.001,
+            "batch_size": 128,
+            "epochs": 300,
+            "patience": 30,
+            "weight_decay": 1e-4,
+        },
+        "residual": {
+            "learning_rate": 0.0008,
+            "batch_size": 128,
+            "epochs": 400,
+            "patience": 40,
+            "weight_decay": 1e-4,
+        },
+        "attention": {
+            "learning_rate": 0.0008,  # Reduced from original problematic version
+            "batch_size": 128,  # Increased since we're not using memory-intensive MultiheadAttention
+            "epochs": 350,
+            "patience": 35,
+            "weight_decay": 1e-5,
+        },
+        "conv_attention": {
+            "learning_rate": 0.001,
+            "batch_size": 128,
+            "epochs": 350,
+            "patience": 35,
+            "weight_decay": 1e-4,
+        },
+        "ensemble": {
+            "learning_rate": 0.001,
+            "batch_size": 96,
+            "epochs": 300,
+            "patience": 30,
+            "weight_decay": 1e-4,
+        },
+        "variational": {
+            "learning_rate": 0.0008,
+            "batch_size": 128,
+            "epochs": 500,  # Needs more training
+            "patience": 50,
+            "weight_decay": 1e-5,
+        },
+        "adaptive": {
+            "learning_rate": 0.001,
+            "batch_size": 128,
+            "epochs": 350,
+            "patience": 35,
+            "weight_decay": 1e-4,
+        },
+    }
+
+    return params.get(arch_type, params["standard"])
 
 
 class EnsembleMLP(BaseRegressorNet):
