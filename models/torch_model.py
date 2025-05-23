@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 import time
 import joblib
+import psutil
 from sklearn.base import BaseEstimator, RegressorMixin
 from tqdm import tqdm
 
@@ -207,7 +208,7 @@ def train_torch_regressor(
     X_train,
     y_train,
     epochs=300,
-    batch_size=128,
+    batch_size=256,  # Increased default batch size
     learning_rate=0.0008,
     architecture_type="embedding_regressor",  # Default to original architecture
     device=None,
@@ -246,14 +247,14 @@ def train_torch_regressor(
         # Use recommended parameters if defaults weren't overridden
         if learning_rate == 0.0008:  # Default value
             learning_rate = recommended_params["learning_rate"]
-        if batch_size == 128:  # Default value
+        if batch_size == 256:  # Updated default value
             batch_size = recommended_params["batch_size"]
         if epochs == 300:  # Default value
             epochs = recommended_params["epochs"]
         if patience == 30:  # Default value
             patience = recommended_params["patience"]
 
-    # CUDA optimization code (keep your existing code here)
+    # GPU optimizations
     if device == "cuda" and torch.cuda.is_available():
         torch.backends.cudnn.benchmark = True
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -276,7 +277,7 @@ def train_torch_regressor(
         print(f"Starting {architecture_type} training on {device}...")
         print(f"Input data: X_train={X_train.shape}, y_train={y_train.shape}")
 
-    # Data preparation (keep your existing sparse matrix handling code)
+    # Data preparation
     is_sparse = hasattr(X_train, "toarray")
     if is_sparse:
         print(
@@ -284,7 +285,7 @@ def train_torch_regressor(
         )
         X_train = X_train.toarray()
 
-    # Create tensors and data loaders (use your existing code)
+    # Create tensors and data loaders with optimizations
     X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
     y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
     full_dataset = TensorDataset(X_train_tensor, y_train_tensor)
@@ -297,14 +298,28 @@ def train_torch_regressor(
         generator=torch.Generator().manual_seed(42),
     )
 
+    # Optimized DataLoader settings
+    num_workers = min(8, psutil.cpu_count(logical=False))  # Use physical cores
+    pin_memory = device == "cuda"
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        pin_memory=(device == "cuda"),
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=True,
+        prefetch_factor=2,
+        drop_last=True,
     )
     val_loader = DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=False, pin_memory=(device == "cuda")
+        val_dataset,
+        batch_size=batch_size * 2,  # Larger validation batches
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=True,
+        prefetch_factor=2,
     )
 
     # Create model based on architecture type
@@ -384,7 +399,7 @@ def train_torch_regressor(
             min_lr=learning_rate / 100,
         )
 
-    # Training loop (simplified version of your existing code)
+    # Training loop
     best_val_loss = float("inf")
     patience_counter = 0
     best_model_state = None
@@ -408,10 +423,12 @@ def train_torch_regressor(
         train_loss = 0.0
         train_batches = 0
 
-        for X_batch, y_batch in train_loader:
-            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+        for batch_idx, (X_batch, y_batch) in enumerate(train_loader):
+            # Optimized GPU transfer
+            X_batch = X_batch.to(device, non_blocking=True)
+            y_batch = y_batch.to(device, non_blocking=True)
 
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)  # More efficient
             outputs = model(X_batch)
             if output_dim == 1:
                 outputs = outputs.squeeze()
@@ -424,6 +441,10 @@ def train_torch_regressor(
             train_loss += loss.item()
             train_batches += 1
 
+            # Clear cache periodically
+            if device == "cuda" and batch_idx % 50 == 0:
+                torch.cuda.empty_cache()
+
         train_loss /= train_batches
 
         # Validation phase
@@ -433,7 +454,8 @@ def train_torch_regressor(
 
         with torch.no_grad():
             for X_batch, y_batch in val_loader:
-                X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+                X_batch = X_batch.to(device, non_blocking=True)
+                y_batch = y_batch.to(device, non_blocking=True)
                 outputs = model(X_batch)
                 if output_dim == 1:
                     outputs = outputs.squeeze()
@@ -770,154 +792,6 @@ class AttentionMLP(BaseRegressorNet):
         return self.output_layer(x_out)
 
 
-class ConvAttentionMLP(BaseRegressorNet):
-    """Alternative: MLP with convolutional attention mechanism."""
-
-    def __init__(
-        self,
-        input_dim,
-        output_dim,
-        hidden_dims=[768, 512, 256],
-        dropout_rate=0.3,
-    ):
-        super().__init__(input_dim, output_dim)
-
-        # 1D convolutional layers for spatial attention over features
-        self.conv_attention = nn.Sequential(
-            nn.Conv1d(1, 16, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv1d(16, 8, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv1d(8, 1, kernel_size=3, padding=1),
-            nn.Sigmoid(),
-        )
-
-        # Feature transformation
-        self.feature_transform = nn.Linear(input_dim, hidden_dims[0])
-        self.transform_norm = nn.BatchNorm1d(hidden_dims[0])
-
-        # Standard MLP layers
-        self.mlp_layers = nn.ModuleList()
-        dims = hidden_dims
-        for i in range(len(dims) - 1):
-            self.mlp_layers.extend(
-                [
-                    nn.Linear(dims[i], dims[i + 1]),
-                    nn.ReLU(),
-                    nn.BatchNorm1d(dims[i + 1]),
-                    nn.Dropout(dropout_rate),
-                ]
-            )
-
-        # Output layer
-        self.output_layer = nn.Linear(hidden_dims[-1], output_dim)
-
-        self._init_weights()
-
-    def forward(self, x):
-        batch_size = x.size(0)
-
-        # Apply convolutional attention
-        # Reshape to [batch_size, 1, input_dim] for 1D conv
-        x_conv = x.unsqueeze(1)
-        attention_weights = self.conv_attention(x_conv)
-        attention_weights = attention_weights.squeeze(1)  # [batch_size, input_dim]
-
-        # Apply attention to input
-        attended_features = x * attention_weights
-
-        # Transform features
-        x_out = self.feature_transform(attended_features)
-        x_out = self.transform_norm(x_out)
-        x_out = F.relu(x_out)
-
-        # Standard MLP processing
-        for layer in self.mlp_layers:
-            x_out = layer(x_out)
-
-        return self.output_layer(x_out)
-
-
-def create_architecture(arch_type, input_dim, output_dim, **kwargs):
-    """Factory function to create different architectures."""
-
-    architectures = {
-        "standard": StandardMLP,
-        "residual": ResidualMLP,
-        "attention": AttentionMLP,
-        "conv_attention": ConvAttentionMLP,  # Alternative attention mechanism
-        "ensemble": EnsembleMLP,
-        "variational": VariationalMLP,
-        "adaptive": AdaptiveMLP,
-    }
-
-    if arch_type not in architectures:
-        raise ValueError(
-            f"Unknown architecture: {arch_type}. Available: {list(architectures.keys())}"
-        )
-
-    return architectures[arch_type](input_dim, output_dim, **kwargs)
-
-
-# Updated architecture-specific training parameters
-def get_architecture_specific_params(arch_type):
-    """Get recommended training parameters for each architecture."""
-
-    params = {
-        "standard": {
-            "learning_rate": 0.001,
-            "batch_size": 128,
-            "epochs": 300,
-            "patience": 30,
-            "weight_decay": 1e-4,
-        },
-        "residual": {
-            "learning_rate": 0.0008,
-            "batch_size": 128,
-            "epochs": 400,
-            "patience": 40,
-            "weight_decay": 1e-4,
-        },
-        "attention": {
-            "learning_rate": 0.0008,  # Reduced from original problematic version
-            "batch_size": 128,  # Increased since we're not using memory-intensive MultiheadAttention
-            "epochs": 350,
-            "patience": 35,
-            "weight_decay": 1e-5,
-        },
-        "conv_attention": {
-            "learning_rate": 0.001,
-            "batch_size": 128,
-            "epochs": 350,
-            "patience": 35,
-            "weight_decay": 1e-4,
-        },
-        "ensemble": {
-            "learning_rate": 0.001,
-            "batch_size": 96,
-            "epochs": 300,
-            "patience": 30,
-            "weight_decay": 1e-4,
-        },
-        "variational": {
-            "learning_rate": 0.0008,
-            "batch_size": 128,
-            "epochs": 500,  # Needs more training
-            "patience": 50,
-            "weight_decay": 1e-5,
-        },
-        "adaptive": {
-            "learning_rate": 0.001,
-            "batch_size": 128,
-            "epochs": 350,
-            "patience": 35,
-            "weight_decay": 1e-4,
-        },
-    }
-
-    return params.get(arch_type, params["standard"])
-
-
 class EnsembleMLP(BaseRegressorNet):
     """Ensemble of multiple smaller networks."""
 
@@ -1159,42 +1033,42 @@ def get_architecture_specific_params(arch_type):
     params = {
         "standard": {
             "learning_rate": 0.001,
-            "batch_size": 128,
+            "batch_size": 256,
             "epochs": 300,
             "patience": 30,
             "weight_decay": 1e-4,
         },
         "residual": {
             "learning_rate": 0.0008,
-            "batch_size": 128,
+            "batch_size": 256,
             "epochs": 400,
             "patience": 40,
             "weight_decay": 1e-4,
         },
         "attention": {
-            "learning_rate": 0.0005,
-            "batch_size": 64,  # Attention is memory intensive
+            "learning_rate": 0.0008,
+            "batch_size": 256,
             "epochs": 350,
             "patience": 35,
             "weight_decay": 1e-5,
         },
         "ensemble": {
             "learning_rate": 0.001,
-            "batch_size": 96,
+            "batch_size": 192,
             "epochs": 300,
             "patience": 30,
             "weight_decay": 1e-4,
         },
         "variational": {
             "learning_rate": 0.0008,
-            "batch_size": 128,
-            "epochs": 500,  # Needs more training
+            "batch_size": 256,
+            "epochs": 500,
             "patience": 50,
             "weight_decay": 1e-5,
         },
         "adaptive": {
             "learning_rate": 0.001,
-            "batch_size": 128,
+            "batch_size": 256,
             "epochs": 350,
             "patience": 35,
             "weight_decay": 1e-4,
@@ -1307,7 +1181,6 @@ def optimize_architecture_hyperparameters(
                     trial.suggest_categorical("layer2_size", [256, 512]),
                     trial.suggest_categorical("layer3_size", [128, 256]),
                 ],
-                "num_heads": trial.suggest_categorical("num_heads", [4, 8, 16]),
                 "dropout_rate": trial.suggest_float("dropout_rate", 0.1, 0.4),
             }
         elif architecture_type == "ensemble":
@@ -1327,11 +1200,11 @@ def optimize_architecture_hyperparameters(
 
         # Training parameters
         learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-2, log=True)
-        batch_size = trial.suggest_categorical("batch_size", [32, 64, 128, 256])
+        batch_size = trial.suggest_categorical("batch_size", [64, 128, 256, 512])
 
         try:
             # Train model
-            model = train_multi_arch_regressor(
+            model = train_torch_regressor(
                 X_train,
                 y_train,
                 architecture_type=architecture_type,
