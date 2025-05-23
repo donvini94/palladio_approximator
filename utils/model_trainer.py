@@ -68,12 +68,14 @@ def train_model(args, X_train, y_train, X_val, y_val, X_test, y_test):
             "epochs": args.epochs,
             "batch_size": args.batch_size,
             "device": device,
-            "architecture_type": getattr(
-                args, "architecture", "embedding_regressor"
-            ),
+            "architecture_type": getattr(args, "architecture", "embedding_regressor"),
         }
 
-        # Use existing function with new parameter
+        # Add additional parameters if they were optimized
+        for param in ["learning_rate", "hidden_dims", "dropout_rate"]:
+            if hasattr(args, param):
+                torch_params[param] = getattr(args, param)
+
         model = train_torch_regressor(X_train, y_train, **torch_params)
 
     elif args.model in ("ridge", "lasso"):
