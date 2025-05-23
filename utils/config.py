@@ -28,6 +28,7 @@ def parse_args():
         "--architecture",
         type=str,
         choices=[
+            "embedding_regressor",  # Original architecture
             "standard",
             "residual",
             "attention",
@@ -35,9 +36,43 @@ def parse_args():
             "variational",
             "adaptive",
         ],
-        default="standard",
+        default="embedding_regressor",
         help="Neural network architecture type",
     )
+
+    # NEW: Architecture experiment options
+    parser.add_argument(
+        "--compare_architectures",
+        action="store_true",
+        help="Compare multiple architectures on the same dataset",
+    )
+    parser.add_argument(
+        "--architectures_to_compare",
+        nargs="+",
+        choices=[
+            "embedding_regressor",
+            "standard",
+            "residual",
+            "attention",
+            "ensemble",
+            "variational",
+            "adaptive",
+        ],
+        default=["embedding_regressor", "standard", "residual", "attention"],
+        help="List of architectures to compare (used with --compare_architectures)",
+    )
+    parser.add_argument(
+        "--optimize_architecture",
+        action="store_true",
+        help="Optimize hyperparameters for the specified architecture",
+    )
+    parser.add_argument(
+        "--architecture_trials",
+        type=int,
+        default=30,
+        help="Number of trials for architecture-specific hyperparameter optimization",
+    )
+
     # LLaMA model options
     parser.add_argument(
         "--llama_model",
@@ -80,7 +115,7 @@ def parse_args():
 
     # PyTorch model parameters
     parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--batch_size", type=int, default=256)  # Updated default
 
     # Hyperparameter optimization parameters
     parser.add_argument(
@@ -155,10 +190,12 @@ def parse_args():
         use_mlflow=True,
         use_gpu=True,
         save_features=True,
-        load_features=False,
+        load_features=True,
         save_dataset=True,
         load_dataset=True,
         optimize_hyperparameters=False,
+        compare_architectures=False,
+        optimize_architecture=False,
     )
 
     print("Parsing arguments...")

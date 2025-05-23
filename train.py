@@ -78,6 +78,18 @@ def get_experiment_id(args):
     # Create a base experiment name from the key parameters
     base_name = f"{args.model}_{args.embedding}_{args.prediction_mode}"
 
+    # Add experiment type indicators
+    if args.compare_architectures:
+        base_name += "_arch_compare"
+    elif args.optimize_architecture:
+        base_name += f"_arch_opt_{args.architecture}"
+    elif args.optimize_hyperparameters:
+        base_name += "_hyper_opt"
+    else:
+        # Standard training
+        if args.model == "torch":
+            base_name += f"_{args.architecture}"
+
     # Add key hyperparameters based on model type
     if args.model == "rf":
         base_name += f"_n{args.n_estimators}"
@@ -90,6 +102,49 @@ def get_experiment_id(args):
     short_uuid = str(uuid.uuid4())[:8]
 
     return f"{base_name}_{timestamp}_{short_uuid}"
+
+
+def log_experiment_results_to_mlflow(
+    args,
+    model,
+    val_results,
+    test_results,
+    experiment_id,
+    X_train=None,
+    y_train=None,
+    X_val=None,
+    y_val=None,
+):
+    """Helper function to handle MLflow logging for all experiment types."""
+    if not args.use_mlflow:
+        return
+
+    try:
+        # Log PyTorch-specific metrics if applicable
+        if args.model == "torch" and hasattr(model, "training_metrics"):
+            log_torch_model_metrics(model)
+
+        # Get model path for logging
+        model_path = get_model_path(args, experiment_id)
+
+        # Log evaluation results with context data
+        log_evaluation_results(
+            val_results,
+            test_results,
+            model,
+            model_path,
+            X_train=X_train,
+            y_train=y_train,
+            X_val=X_val,
+            y_val=y_val,
+        )
+
+        print("MLflow logging completed successfully")
+
+    except Exception as e:
+        print(f"Warning: MLflow logging failed: {e}")
+        # Don't fail the entire experiment if MLflow logging fails
+        pass
 
 
 def main():
@@ -134,47 +189,91 @@ def main():
         print(f"  X_test: {X_test.shape}")
         print(f"  y_test: {y_test.shape}")
 
-        # Setup MLflow if enabled
+        # Setup MLflow if enabled - do this before training
         if args.use_mlflow:
             print("Setting up MLflow tracking...")
             setup_mlflow()
             log_common_parameters(args)
 
-        # Train the model
-        print(f"Training {args.model} model...")
+        # Train the model (or run experiments)
+        if args.compare_architectures:
+            print(f"Running architecture comparison experiment...")
+        elif args.optimize_architecture:
+            print(f"Running architecture optimization experiment...")
+        else:
+            print(f"Training {args.model} model...")
+
         model, val_results, test_results = train_model(
             args, X_train, y_train, X_val, y_val, X_test, y_test
         )
 
-        # Log metrics to MLflow if enabled
-        if args.use_mlflow:
-            print("Logging results to MLflow...")
-            # Log PyTorch-specific metrics if applicable
-            if args.model == "torch" and hasattr(model, "training_metrics"):
-                log_torch_model_metrics(model)
+        # Handle different experiment types for logging and saving
+        if args.compare_architectures:
+            print(
+                "Architecture comparison completed. Results saved to experiments/architecture_comparison/"
+            )
+            # For comparison experiments, we don't have a single model to log
+            # The comparison results are already saved by train_model
+            if args.use_mlflow:
+                # Log the experiment type and summary info
+                import mlflow
 
-            # Log evaluation results with context data
+                mlflow.log_param("experiment_type", "architecture_comparison")
+                mlflow.log_param(
+                    "architectures_compared", ",".join(args.architectures_to_compare)
+                )
+                # The detailed results are saved as artifacts by the comparison function
+
+        elif args.optimize_architecture:
+            print(
+                "Architecture optimization completed. Results saved to experiments/architecture_optimization/"
+            )
+
+            # Save the optimized model
             model_path = get_model_path(args, experiment_id)
-            log_evaluation_results(
+            print(f"Saving optimized model to: {model_path}")
+            save_model(model, model_path)
+
+            # Log to MLflow - optimization results have regular model/val_results/test_results
+            log_experiment_results_to_mlflow(
+                args,
+                model,
                 val_results,
                 test_results,
-                model,
-                model_path,
-                X_train=X_train,  # Add training data for baseline calculation
-                y_train=y_train,
-                X_val=X_val,  # Add validation data for context metrics
-                y_val=y_val,
+                experiment_id,
+                X_train,
+                y_train,
+                X_val,
+                y_val,
             )
-            end_mlflow_run()  # Save the model with experiment ID in name
 
-        model_path = get_model_path(args, experiment_id)
-        print(f"Saving model to: {model_path}")
-        save_model(model, model_path)
+        else:
+            # Standard training - log everything normally
+            log_experiment_results_to_mlflow(
+                args,
+                model,
+                val_results,
+                test_results,
+                experiment_id,
+                X_train,
+                y_train,
+                X_val,
+                y_val,
+            )
+
+            # Save model for standard training
+            model_path = get_model_path(args, experiment_id)
+            print(f"Saving model to: {model_path}")
+            save_model(model, model_path)
 
         # Save embedding model if needed
         if args.save_features and embedding_model is not None:
             print(f"Saving embedding model to: {embedding_model_path}")
             save_embedding_model(embedding_model, embedding_model_path, args)
+
+        # End MLflow run if it was started
+        if args.use_mlflow:
+            end_mlflow_run()
 
         # Report total execution time
         elapsed_time = time.time() - start_time
@@ -187,6 +286,14 @@ def main():
     except Exception as e:
         print(f"ERROR: {e}")
         traceback.print_exc()
+
+        # End MLflow run on error too
+        if args.use_mlflow:
+            try:
+                end_mlflow_run()
+            except:
+                pass
+
         sys.exit(1)
 
 
