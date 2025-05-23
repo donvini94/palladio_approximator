@@ -184,6 +184,7 @@ def train_torch_regressor(
     epochs=300,  # Many epochs for thorough training
     batch_size=128,  # Moderate batch size for better generalization
     learning_rate=0.0008,  # Smaller learning rate for more stable training
+    architecture_type="embedding_regressor",  # Add this parameter
     device=None,
     hidden_dims=[768, 512, 256, 128],  # Deeper network for better feature learning
     patience=30,  # Higher patience to avoid early stopping
@@ -704,3 +705,1137 @@ def train_torch_regressor(
 
     # Return the wrapped model
     return wrapped_model
+
+
+class BaseRegressorNet(nn.Module):
+    """Base class for all regressor architectures with common functionality."""
+
+    def __init__(self, input_dim, output_dim):
+        super().__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+
+    def _init_weights(self, init_type="kaiming"):
+        """Initialize weights using specified initialization."""
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                if init_type == "kaiming":
+                    nn.init.kaiming_normal_(
+                        m.weight, mode="fan_in", nonlinearity="leaky_relu"
+                    )
+                elif init_type == "xavier":
+                    nn.init.xavier_normal_(m.weight)
+                elif init_type == "he":
+                    nn.init.kaiming_uniform_(m.weight, nonlinearity="relu")
+
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.ones_(m.weight)
+                nn.init.zeros_(m.bias)
+
+
+class StandardMLP(BaseRegressorNet):
+    """Standard Multi-Layer Perceptron (your current architecture, refined)."""
+
+    def __init__(
+        self,
+        input_dim,
+        output_dim,
+        hidden_dims=[768, 512, 256, 128],
+        activation="leaky_relu",
+        dropout_rate=0.3,
+        use_batch_norm=True,
+    ):
+        super().__init__(input_dim, output_dim)
+
+        self.activation_fn = self._get_activation(activation)
+        self.use_batch_norm = use_batch_norm
+
+        # Input processing
+        self.input_bn = nn.BatchNorm1d(input_dim) if use_batch_norm else nn.Identity()
+        self.input_dropout = nn.Dropout(dropout_rate * 0.7)  # Lower dropout for input
+
+        # Build hidden layers
+        self.layers = nn.ModuleList()
+        dims = [input_dim] + hidden_dims
+
+        for i in range(len(dims) - 1):
+            layer_block = nn.ModuleList(
+                [
+                    nn.Linear(dims[i], dims[i + 1]),
+                    self.activation_fn,
+                    nn.BatchNorm1d(dims[i + 1]) if use_batch_norm else nn.Identity(),
+                    nn.Dropout(dropout_rate * (1 - 0.1 * i)),  # Decreasing dropout
+                ]
+            )
+            self.layers.append(layer_block)
+
+        # Output layer
+        self.output_layer = nn.Linear(hidden_dims[-1], output_dim)
+
+        self._init_weights()
+
+    def _get_activation(self, activation):
+        """Get activation function by name."""
+        activations = {
+            "relu": nn.ReLU(),
+            "leaky_relu": nn.LeakyReLU(0.1),
+            "gelu": nn.GELU(),
+            "swish": nn.SiLU(),  # Swish activation
+            "tanh": nn.Tanh(),
+            "elu": nn.ELU(),
+        }
+        return activations.get(activation, nn.LeakyReLU(0.1))
+
+    def forward(self, x):
+        x = self.input_bn(x)
+        x = self.input_dropout(x)
+
+        for layer_block in self.layers:
+            for layer in layer_block:
+                x = layer(x)
+
+        return self.output_layer(x)
+
+
+class ResidualMLP(BaseRegressorNet):
+    """MLP with residual connections for better gradient flow."""
+
+    def __init__(
+        self,
+        input_dim,
+        output_dim,
+        hidden_dims=[768, 512, 512, 256],
+        activation="leaky_relu",
+        dropout_rate=0.3,
+    ):
+        super().__init__(input_dim, output_dim)
+
+        self.activation_fn = self._get_activation(activation)
+
+        # Input projection to first hidden dimension
+        self.input_proj = nn.Linear(input_dim, hidden_dims[0])
+        self.input_bn = nn.BatchNorm1d(hidden_dims[0])
+
+        # Residual blocks
+        self.residual_blocks = nn.ModuleList()
+        for i in range(len(hidden_dims) - 1):
+            block = ResidualBlock(
+                hidden_dims[i], hidden_dims[i + 1], activation, dropout_rate
+            )
+            self.residual_blocks.append(block)
+
+        # Output layer
+        self.output_layer = nn.Linear(hidden_dims[-1], output_dim)
+
+        self._init_weights()
+
+    def _get_activation(self, activation):
+        """Get activation function by name."""
+        activations = {
+            "relu": nn.ReLU(),
+            "leaky_relu": nn.LeakyReLU(0.1),
+            "gelu": nn.GELU(),
+            "swish": nn.SiLU(),
+        }
+        return activations.get(activation, nn.LeakyReLU(0.1))
+
+    def forward(self, x):
+        # Input projection
+        x = self.input_proj(x)
+        x = self.input_bn(x)
+        x = self.activation_fn(x)
+
+        # Residual blocks
+        for block in self.residual_blocks:
+            x = block(x)
+
+        return self.output_layer(x)
+
+
+class ResidualBlock(nn.Module):
+    """Residual block with optional dimension change."""
+
+    def __init__(self, in_dim, out_dim, activation="leaky_relu", dropout_rate=0.3):
+        super().__init__()
+
+        self.activation_fn = self._get_activation(activation)
+
+        # Main path
+        self.linear1 = nn.Linear(in_dim, out_dim)
+        self.bn1 = nn.BatchNorm1d(out_dim)
+        self.dropout1 = nn.Dropout(dropout_rate)
+
+        self.linear2 = nn.Linear(out_dim, out_dim)
+        self.bn2 = nn.BatchNorm1d(out_dim)
+        self.dropout2 = nn.Dropout(dropout_rate)
+
+        # Skip connection (if dimensions don't match)
+        self.skip_connection = (
+            nn.Linear(in_dim, out_dim) if in_dim != out_dim else nn.Identity()
+        )
+
+    def _get_activation(self, activation):
+        activations = {
+            "relu": nn.ReLU(),
+            "leaky_relu": nn.LeakyReLU(0.1),
+            "gelu": nn.GELU(),
+            "swish": nn.SiLU(),
+        }
+        return activations.get(activation, nn.LeakyReLU(0.1))
+
+    def forward(self, x):
+        residual = self.skip_connection(x)
+
+        # Main path
+        out = self.linear1(x)
+        out = self.bn1(out)
+        out = self.activation_fn(out)
+        out = self.dropout1(out)
+
+        out = self.linear2(out)
+        out = self.bn2(out)
+
+        # Add residual connection
+        out += residual
+        out = self.activation_fn(out)
+        out = self.dropout2(out)
+
+        return out
+
+
+class AttentionMLP(BaseRegressorNet):
+    """MLP with self-attention mechanism for feature importance."""
+
+    def __init__(
+        self,
+        input_dim,
+        output_dim,
+        hidden_dims=[768, 512, 256],
+        num_heads=8,
+        dropout_rate=0.3,
+    ):
+        super().__init__(input_dim, output_dim)
+
+        # Input projection to make input dimension divisible by num_heads
+        attention_dim = hidden_dims[0]
+        self.input_proj = nn.Linear(input_dim, attention_dim)
+
+        # Self-attention layer
+        self.attention = nn.MultiheadAttention(
+            embed_dim=attention_dim,
+            num_heads=num_heads,
+            dropout=dropout_rate,
+            batch_first=True,
+        )
+
+        # Layer normalization
+        self.layer_norm = nn.LayerNorm(attention_dim)
+
+        # Standard MLP layers after attention
+        self.mlp_layers = nn.ModuleList()
+        dims = hidden_dims
+        for i in range(len(dims) - 1):
+            self.mlp_layers.extend(
+                [
+                    nn.Linear(dims[i], dims[i + 1]),
+                    nn.ReLU(),
+                    nn.BatchNorm1d(dims[i + 1]),
+                    nn.Dropout(dropout_rate),
+                ]
+            )
+
+        # Output layer
+        self.output_layer = nn.Linear(hidden_dims[-1], output_dim)
+
+        self._init_weights()
+
+    def forward(self, x):
+        batch_size = x.size(0)
+
+        # Project input
+        x = self.input_proj(x)  # [batch_size, attention_dim]
+
+        # Reshape for attention (treat features as sequence)
+        # We'll split features into chunks for attention
+        chunk_size = 64  # Each chunk represents a "token"
+        num_chunks = x.size(1) // chunk_size
+        if num_chunks == 0:
+            num_chunks = 1
+            chunk_size = x.size(1)
+
+        # Reshape to [batch_size, num_chunks, chunk_size]
+        x_reshaped = x[:, : num_chunks * chunk_size].view(
+            batch_size, num_chunks, chunk_size
+        )
+
+        # Apply self-attention
+        attended, attention_weights = self.attention(x_reshaped, x_reshaped, x_reshaped)
+
+        # Layer normalization and residual connection
+        x_out = self.layer_norm(attended + x_reshaped)
+
+        # Flatten back to [batch_size, features]
+        x_out = x_out.view(batch_size, -1)
+
+        # Standard MLP processing
+        for layer in self.mlp_layers:
+            x_out = layer(x_out)
+
+        return self.output_layer(x_out)
+
+
+class EnsembleMLP(BaseRegressorNet):
+    """Ensemble of multiple smaller networks."""
+
+    def __init__(
+        self,
+        input_dim,
+        output_dim,
+        num_experts=4,
+        expert_hidden_dims=[256, 128],
+        dropout_rate=0.3,
+    ):
+        super().__init__(input_dim, output_dim)
+
+        # Multiple expert networks
+        self.experts = nn.ModuleList(
+            [
+                self._create_expert(input_dim, expert_hidden_dims, dropout_rate)
+                for _ in range(num_experts)
+            ]
+        )
+
+        # Gating network to weight expert outputs
+        self.gating_network = nn.Sequential(
+            nn.Linear(input_dim, num_experts * 2),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(num_experts * 2, num_experts),
+            nn.Softmax(dim=1),
+        )
+
+        # Final combination layer
+        self.output_layer = nn.Linear(num_experts * expert_hidden_dims[-1], output_dim)
+
+        self._init_weights()
+
+    def _create_expert(self, input_dim, hidden_dims, dropout_rate):
+        """Create a single expert network."""
+        layers = []
+        dims = [input_dim] + hidden_dims
+
+        for i in range(len(dims) - 1):
+            layers.extend(
+                [
+                    nn.Linear(dims[i], dims[i + 1]),
+                    nn.ReLU(),
+                    nn.BatchNorm1d(dims[i + 1]),
+                    nn.Dropout(dropout_rate),
+                ]
+            )
+
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        # Get expert outputs
+        expert_outputs = []
+        for expert in self.experts:
+            expert_out = expert(x)
+            expert_outputs.append(expert_out)
+
+        # Get gating weights
+        gates = self.gating_network(x)  # [batch_size, num_experts]
+
+        # Weighted combination of expert outputs
+        weighted_outputs = []
+        for i, expert_out in enumerate(expert_outputs):
+            weight = gates[:, i : i + 1]  # [batch_size, 1]
+            weighted_outputs.append(weight * expert_out)
+
+        # Concatenate weighted outputs
+        combined = torch.cat(weighted_outputs, dim=1)
+
+        return self.output_layer(combined)
+
+
+class VariationalMLP(BaseRegressorNet):
+    """MLP with variational (Bayesian) layers for uncertainty estimation."""
+
+    def __init__(
+        self,
+        input_dim,
+        output_dim,
+        hidden_dims=[768, 512, 256],
+        dropout_rate=0.3,
+        num_samples=10,
+    ):
+        super().__init__(input_dim, output_dim)
+
+        self.num_samples = num_samples
+
+        # Variational layers
+        self.var_layers = nn.ModuleList()
+        dims = [input_dim] + hidden_dims
+
+        for i in range(len(dims) - 1):
+            var_layer = VariationalLinear(dims[i], dims[i + 1])
+            self.var_layers.append(var_layer)
+
+        # Activation and normalization
+        self.activation = nn.ReLU()
+        self.dropout = nn.Dropout(dropout_rate)
+
+        # Output layer (also variational)
+        self.output_layer = VariationalLinear(hidden_dims[-1], output_dim)
+
+    def forward(self, x, return_uncertainty=False):
+        if return_uncertainty:
+            # Sample multiple times for uncertainty estimation
+            predictions = []
+            for _ in range(self.num_samples):
+                pred = self._forward_single(x)
+                predictions.append(pred)
+
+            predictions = torch.stack(
+                predictions
+            )  # [num_samples, batch_size, output_dim]
+            mean_pred = predictions.mean(dim=0)
+            uncertainty = predictions.std(dim=0)
+
+            return mean_pred, uncertainty
+        else:
+            return self._forward_single(x)
+
+    def _forward_single(self, x):
+        for var_layer in self.var_layers:
+            x = var_layer(x)
+            x = self.activation(x)
+            x = self.dropout(x)
+
+        return self.output_layer(x)
+
+
+class VariationalLinear(nn.Module):
+    """Linear layer with variational weights."""
+
+    def __init__(self, in_features, out_features):
+        super().__init__()
+
+        # Weight parameters
+        self.weight_mu = nn.Parameter(torch.randn(out_features, in_features) * 0.1)
+        self.weight_logvar = nn.Parameter(
+            torch.randn(out_features, in_features) * 0.1 - 5
+        )
+
+        # Bias parameters
+        self.bias_mu = nn.Parameter(torch.zeros(out_features))
+        self.bias_logvar = nn.Parameter(torch.zeros(out_features) - 5)
+
+    def forward(self, x):
+        # Sample weights
+        weight_std = torch.exp(0.5 * self.weight_logvar)
+        weight_eps = torch.randn_like(self.weight_mu)
+        weight = self.weight_mu + weight_std * weight_eps
+
+        # Sample bias
+        bias_std = torch.exp(0.5 * self.bias_logvar)
+        bias_eps = torch.randn_like(self.bias_mu)
+        bias = self.bias_mu + bias_std * bias_eps
+
+        return F.linear(x, weight, bias)
+
+
+class AdaptiveMLP(BaseRegressorNet):
+    """MLP with adaptive architecture based on input complexity."""
+
+    def __init__(
+        self,
+        input_dim,
+        output_dim,
+        base_hidden_dims=[512, 256, 128],
+        complexity_threshold=0.5,
+        dropout_rate=0.3,
+    ):
+        super().__init__(input_dim, output_dim)
+
+        self.complexity_threshold = complexity_threshold
+
+        # Complexity estimation network
+        self.complexity_estimator = nn.Sequential(
+            nn.Linear(input_dim, 64), nn.ReLU(), nn.Linear(64, 1), nn.Sigmoid()
+        )
+
+        # Simple path (for low complexity inputs)
+        self.simple_path = StandardMLP(
+            input_dim,
+            output_dim,
+            hidden_dims=base_hidden_dims[:2],  # Fewer layers
+            dropout_rate=dropout_rate,
+        )
+
+        # Complex path (for high complexity inputs)
+        self.complex_path = StandardMLP(
+            input_dim,
+            output_dim,
+            hidden_dims=base_hidden_dims + [64],  # More layers
+            dropout_rate=dropout_rate,
+        )
+
+        self._init_weights()
+
+    def forward(self, x):
+        # Estimate input complexity
+        complexity = self.complexity_estimator(x)  # [batch_size, 1]
+
+        # Route through appropriate path
+        simple_out = self.simple_path(x)
+        complex_out = self.complex_path(x)
+
+        # Weighted combination based on complexity
+        weight = (complexity > self.complexity_threshold).float()
+        output = weight * complex_out + (1 - weight) * simple_out
+
+        return output
+
+
+def create_architecture(arch_type, input_dim, output_dim, **kwargs):
+    """Factory function to create different architectures."""
+
+    architectures = {
+        "standard": StandardMLP,
+        "residual": ResidualMLP,
+        "attention": AttentionMLP,
+        "ensemble": EnsembleMLP,
+        "variational": VariationalMLP,
+        "adaptive": AdaptiveMLP,
+    }
+
+    if arch_type not in architectures:
+        raise ValueError(
+            f"Unknown architecture: {arch_type}. Available: {list(architectures.keys())}"
+        )
+
+    return architectures[arch_type](input_dim, output_dim, **kwargs)
+
+
+# Architecture-specific training modifications
+def get_architecture_specific_params(arch_type):
+    """Get recommended training parameters for each architecture."""
+
+    params = {
+        "standard": {
+            "learning_rate": 0.001,
+            "batch_size": 128,
+            "epochs": 300,
+            "patience": 30,
+            "weight_decay": 1e-4,
+        },
+        "residual": {
+            "learning_rate": 0.0008,
+            "batch_size": 128,
+            "epochs": 400,
+            "patience": 40,
+            "weight_decay": 1e-4,
+        },
+        "attention": {
+            "learning_rate": 0.0005,
+            "batch_size": 64,  # Attention is memory intensive
+            "epochs": 350,
+            "patience": 35,
+            "weight_decay": 1e-5,
+        },
+        "ensemble": {
+            "learning_rate": 0.001,
+            "batch_size": 96,
+            "epochs": 300,
+            "patience": 30,
+            "weight_decay": 1e-4,
+        },
+        "variational": {
+            "learning_rate": 0.0008,
+            "batch_size": 128,
+            "epochs": 500,  # Needs more training
+            "patience": 50,
+            "weight_decay": 1e-5,
+        },
+        "adaptive": {
+            "learning_rate": 0.001,
+            "batch_size": 128,
+            "epochs": 350,
+            "patience": 35,
+            "weight_decay": 1e-4,
+        },
+    }
+
+    return params.get(arch_type, params["standard"])
+
+
+class MultiArchRegressorWrapper(BaseEstimator, RegressorMixin):
+    """
+    Extended wrapper that handles multiple architecture types.
+    """
+
+    def __init__(self, model, device="cpu", architecture_type="standard"):
+        self.model = model
+        self.device = device
+        self.architecture_type = architecture_type
+
+    def predict(self, X):
+        """Make predictions with special handling for different architectures."""
+        # Handle sparse matrices
+        is_sparse = hasattr(X, "toarray")
+        if is_sparse:
+            if not hasattr(X, "tocsr") or X.format != "csr":
+                X = X.tocsr()
+
+        # Convert to tensor
+        if not isinstance(X, torch.Tensor):
+            if is_sparse:
+                X = torch.tensor(X.toarray(), dtype=torch.float32).to(self.device)
+            else:
+                X = torch.tensor(X, dtype=torch.float32).to(self.device)
+
+        self.model.eval()
+
+        # Handle different architecture types
+        if self.architecture_type == "variational":
+            # For variational models, we can return uncertainty estimates
+            with torch.no_grad():
+                if (
+                    hasattr(self.model, "forward")
+                    and "return_uncertainty" in self.model.forward.__code__.co_varnames
+                ):
+                    predictions, uncertainty = self.model(X, return_uncertainty=True)
+                    # Store uncertainty for later analysis
+                    self.last_uncertainty = uncertainty.cpu().numpy()
+                    return predictions.cpu().numpy()
+                else:
+                    return self.model(X).cpu().numpy()
+        else:
+            # Standard prediction for other architectures
+            with torch.no_grad():
+                predictions = self.model(X)
+                return predictions.cpu().numpy()
+
+    def predict_with_uncertainty(self, X):
+        """Special method for variational models to return uncertainty."""
+        if self.architecture_type != "variational":
+            raise ValueError(
+                "Uncertainty prediction only available for variational models"
+            )
+
+        if not isinstance(X, torch.Tensor):
+            if hasattr(X, "toarray"):
+                X = torch.tensor(X.toarray(), dtype=torch.float32).to(self.device)
+            else:
+                X = torch.tensor(X, dtype=torch.float32).to(self.device)
+
+        self.model.eval()
+        with torch.no_grad():
+            predictions, uncertainty = self.model(X, return_uncertainty=True)
+            return predictions.cpu().numpy(), uncertainty.cpu().numpy()
+
+    def score(self, X, y):
+        from sklearn.metrics import r2_score
+
+        y_pred = self.predict(X)
+        return r2_score(y, y_pred)
+
+
+def train_multi_arch_regressor(
+    X_train,
+    y_train,
+    architecture_type="standard",
+    arch_params=None,
+    epochs=300,
+    batch_size=128,
+    learning_rate=0.001,
+    device=None,
+    patience=30,
+    verbose=True,
+    **kwargs,
+):
+    """
+    Train a neural network with the specified architecture.
+
+    Args:
+        X_train: Training features
+        y_train: Training targets
+        architecture_type: Type of architecture ('standard', 'residual', 'attention', etc.)
+        arch_params: Architecture-specific parameters
+        epochs: Number of training epochs
+        batch_size: Batch size for training
+        learning_rate: Learning rate
+        device: Device to use ('cuda' or 'cpu')
+        patience: Early stopping patience
+        verbose: Whether to print progress
+        **kwargs: Additional architecture parameters
+
+    Returns:
+        Trained model wrapped in MultiArchRegressorWrapper
+    """
+    # Determine device
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Get architecture-specific recommended parameters
+    recommended_params = get_architecture_specific_params(architecture_type)
+
+    # Override defaults with recommended parameters if not explicitly provided
+    if learning_rate == 0.001:  # Default value
+        learning_rate = recommended_params["learning_rate"]
+    if batch_size == 128:  # Default value
+        batch_size = recommended_params["batch_size"]
+    if epochs == 300:  # Default value
+        epochs = recommended_params["epochs"]
+    if patience == 30:  # Default value
+        patience = recommended_params["patience"]
+
+    start_time = time.time()
+    if verbose:
+        print(f"Training {architecture_type} architecture on {device}...")
+        print(f"Recommended params: {recommended_params}")
+        print(f"Using: lr={learning_rate}, batch_size={batch_size}, epochs={epochs}")
+
+    # Prepare data
+    input_dim = X_train.shape[1]
+    output_dim = y_train.shape[1] if len(y_train.shape) > 1 else 1
+
+    # Create architecture-specific model
+    if arch_params is None:
+        arch_params = {}
+
+    # Merge kwargs into arch_params
+    arch_params.update(kwargs)
+
+    # Create the model
+    model = create_architecture(
+        architecture_type, input_dim, output_dim, **arch_params
+    ).to(device)
+
+    if verbose:
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(
+            f"Model parameters: {total_params:,} total, {trainable_params:,} trainable"
+        )
+
+    # Handle sparse matrices
+    is_sparse = hasattr(X_train, "toarray")
+    if is_sparse:
+        print("Detected sparse matrix input. Converting to dense for training.")
+        X_train = X_train.toarray()
+
+    # Create data loaders
+    X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
+    y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
+
+    full_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+
+    # Split into train/val
+    val_size = int(0.1 * len(full_dataset))
+    train_size = len(full_dataset) - val_size
+    train_dataset, val_dataset = torch.utils.data.random_split(
+        full_dataset,
+        [train_size, val_size],
+        generator=torch.Generator().manual_seed(42),
+    )
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        pin_memory=(device == "cuda"),
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        pin_memory=(device == "cuda"),
+    )
+
+    # Loss function - architecture specific
+    if architecture_type == "variational":
+        # Variational models need special loss handling
+        def criterion_fn(outputs, targets):
+            mse_loss = nn.MSELoss()(outputs, targets)
+            # Add KL divergence for variational layers (simplified)
+            kl_loss = 0.0
+            for module in model.modules():
+                if hasattr(module, "weight_mu") and hasattr(module, "weight_logvar"):
+                    kl = -0.5 * torch.sum(
+                        1
+                        + module.weight_logvar
+                        - module.weight_mu.pow(2)
+                        - module.weight_logvar.exp()
+                    )
+                    kl_loss += kl
+            return mse_loss + 1e-6 * kl_loss  # Small weight for KL term
+
+    else:
+        # Standard loss for other architectures
+        mse_criterion = nn.MSELoss()
+        l1_criterion = nn.L1Loss()
+
+        def criterion_fn(outputs, targets):
+            mse = mse_criterion(outputs, targets)
+            l1 = l1_criterion(outputs, targets)
+            return 0.8 * mse + 0.2 * l1
+
+    # Optimizer - architecture specific
+    weight_decay = recommended_params.get("weight_decay", 1e-4)
+
+    if architecture_type == "attention":
+        # Attention models benefit from different optimizer settings
+        optimizer = optim.AdamW(
+            model.parameters(),
+            lr=learning_rate,
+            weight_decay=weight_decay,
+            betas=(0.9, 0.98),  # Common for attention models
+            eps=1e-9,
+        )
+    else:
+        optimizer = optim.AdamW(
+            model.parameters(),
+            lr=learning_rate,
+            weight_decay=weight_decay,
+            betas=(0.9, 0.999),
+            eps=1e-8,
+        )
+
+    # Learning rate scheduler
+    if architecture_type == "residual":
+        # Residual networks benefit from cosine annealing
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    else:
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=0.5,
+            patience=patience // 3,
+            min_lr=learning_rate / 100,
+        )
+
+    # Training loop
+    best_val_loss = float("inf")
+    patience_counter = 0
+    best_model_state = None
+
+    # Metrics tracking
+    metrics_history = {
+        "train_loss": [],
+        "val_loss": [],
+        "learning_rate": [],
+        "architecture_type": architecture_type,
+    }
+
+    # Progress bar
+    progress_bar = (
+        tqdm(range(epochs), desc=f"Training {architecture_type}")
+        if verbose
+        else range(epochs)
+    )
+
+    for epoch in progress_bar:
+        # Training phase
+        model.train()
+        train_loss = 0.0
+        train_batches = 0
+
+        for X_batch, y_batch in train_loader:
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+
+            optimizer.zero_grad()
+
+            # Forward pass
+            outputs = model(X_batch)
+            if output_dim == 1:
+                outputs = outputs.squeeze()
+
+            loss = criterion_fn(outputs, y_batch)
+
+            # Backward pass
+            loss.backward()
+
+            # Gradient clipping (especially important for attention models)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+            optimizer.step()
+
+            train_loss += loss.item()
+            train_batches += 1
+
+        train_loss /= train_batches
+
+        # Validation phase
+        model.eval()
+        val_loss = 0.0
+        val_batches = 0
+
+        with torch.no_grad():
+            for X_batch, y_batch in val_loader:
+                X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+
+                outputs = model(X_batch)
+                if output_dim == 1:
+                    outputs = outputs.squeeze()
+
+                loss = criterion_fn(outputs, y_batch)
+                val_loss += loss.item()
+                val_batches += 1
+
+        val_loss /= val_batches
+
+        # Update learning rate
+        if isinstance(scheduler, optim.lr_scheduler.CosineAnnealingLR):
+            scheduler.step()
+        else:
+            scheduler.step(val_loss)
+
+        current_lr = optimizer.param_groups[0]["lr"]
+
+        # Store metrics
+        metrics_history["train_loss"].append(train_loss)
+        metrics_history["val_loss"].append(val_loss)
+        metrics_history["learning_rate"].append(current_lr)
+
+        # Update progress bar
+        if verbose:
+            progress_bar.set_postfix(
+                {
+                    "train_loss": f"{train_loss:.4f}",
+                    "val_loss": f"{val_loss:.4f}",
+                    "lr": f"{current_lr:.6f}",
+                }
+            )
+
+        # Early stopping
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            patience_counter = 0
+            best_model_state = model.state_dict().copy()
+        else:
+            patience_counter += 1
+
+        if patience_counter >= patience:
+            if verbose:
+                print(f"Early stopping at epoch {epoch+1}")
+            break
+
+    # Load best model state
+    if best_model_state is not None:
+        model.load_state_dict(best_model_state)
+
+    # Report training time
+    elapsed_time = time.time() - start_time
+    if verbose:
+        print(f"{architecture_type} training completed in {elapsed_time:.2f} seconds")
+        print(f"Best validation loss: {best_val_loss:.6f}")
+
+    # Create wrapper
+    wrapped_model = MultiArchRegressorWrapper(model, device, architecture_type)
+
+    # Add training metadata
+    wrapped_model.training_metrics = {
+        "history": metrics_history,
+        "architecture_type": architecture_type,
+        "architecture_params": arch_params,
+        "training_time_seconds": elapsed_time,
+        "best_val_loss": best_val_loss,
+        "total_epochs": epoch + 1,
+        "input_dim": input_dim,
+        "output_dim": output_dim,
+        "total_parameters": sum(p.numel() for p in model.parameters()),
+        "trainable_parameters": sum(
+            p.numel() for p in model.parameters() if p.requires_grad
+        ),
+        "pytorch_model": model,
+    }
+
+    return wrapped_model
+
+
+def compare_architectures(
+    X_train,
+    y_train,
+    X_val,
+    y_val,
+    X_test,
+    y_test,
+    architectures=None,
+    device=None,
+    verbose=True,
+):
+    """
+    Compare multiple architectures on the same data.
+
+    Args:
+        X_train, y_train: Training data
+        X_val, y_val: Validation data
+        X_test, y_test: Test data
+        architectures: List of architecture types to compare
+        device: Device to use
+        verbose: Whether to print progress
+
+    Returns:
+        Dictionary with results for each architecture
+    """
+    if architectures is None:
+        architectures = ["standard", "residual", "attention", "ensemble"]
+
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    results = {}
+
+    for arch_type in architectures:
+        if verbose:
+            print(f"\n{'='*50}")
+            print(f"Training {arch_type} architecture")
+            print(f"{'='*50}")
+
+        try:
+            # Train model
+            model = train_multi_arch_regressor(
+                X_train,
+                y_train,
+                architecture_type=arch_type,
+                device=device,
+                verbose=verbose,
+            )
+
+            # Evaluate
+            from evaluate import evaluate_model
+
+            val_results = evaluate_model(
+                model, X_val, y_val, split_name="val", verbose=False
+            )
+            test_results = evaluate_model(
+                model, X_test, y_test, split_name="test", verbose=False
+            )
+
+            results[arch_type] = {
+                "model": model,
+                "val_results": val_results,
+                "test_results": test_results,
+                "training_metrics": model.training_metrics,
+            }
+
+            if verbose:
+                print(f"Validation MSE: {val_results.metrics.get('val_mse', 'N/A')}")
+                print(f"Test MSE: {test_results.metrics.get('test_mse', 'N/A')}")
+                print(
+                    f"Total parameters: {model.training_metrics['total_parameters']:,}"
+                )
+
+        except Exception as e:
+            print(f"Error training {arch_type}: {e}")
+            results[arch_type] = {"error": str(e)}
+
+        # Clear GPU memory
+        if device == "cuda":
+            torch.cuda.empty_cache()
+
+    return results
+
+
+# Integration with existing hyperparameter optimization
+def optimize_architecture_hyperparameters(
+    X_train,
+    y_train,
+    X_val,
+    y_val,
+    architecture_type="standard",
+    n_trials=30,
+    metric="val_mse",
+):
+    """
+    Optimize hyperparameters for a specific architecture using Optuna.
+
+    This extends the existing hyperparameter optimization to work with different architectures.
+    """
+    import optuna
+
+    def objective(trial):
+        # Architecture-specific parameter suggestions
+        if architecture_type == "standard":
+            params = {
+                "hidden_dims": [
+                    trial.suggest_categorical("layer1_size", [256, 512, 768, 1024]),
+                    trial.suggest_categorical("layer2_size", [128, 256, 512]),
+                    trial.suggest_categorical("layer3_size", [64, 128, 256]),
+                ],
+                "dropout_rate": trial.suggest_float("dropout_rate", 0.1, 0.5),
+                "activation": trial.suggest_categorical(
+                    "activation", ["relu", "leaky_relu", "gelu", "swish"]
+                ),
+            }
+        elif architecture_type == "attention":
+            params = {
+                "hidden_dims": [
+                    trial.suggest_categorical("layer1_size", [512, 768, 1024]),
+                    trial.suggest_categorical("layer2_size", [256, 512]),
+                    trial.suggest_categorical("layer3_size", [128, 256]),
+                ],
+                "num_heads": trial.suggest_categorical("num_heads", [4, 8, 16]),
+                "dropout_rate": trial.suggest_float("dropout_rate", 0.1, 0.4),
+            }
+        elif architecture_type == "ensemble":
+            params = {
+                "num_experts": trial.suggest_int("num_experts", 2, 8),
+                "expert_hidden_dims": [
+                    trial.suggest_categorical("expert_layer1", [128, 256, 512]),
+                    trial.suggest_categorical("expert_layer2", [64, 128, 256]),
+                ],
+                "dropout_rate": trial.suggest_float("dropout_rate", 0.1, 0.5),
+            }
+        else:
+            # Default parameters for other architectures
+            params = {
+                "dropout_rate": trial.suggest_float("dropout_rate", 0.1, 0.5),
+            }
+
+        # Training parameters
+        learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-2, log=True)
+        batch_size = trial.suggest_categorical("batch_size", [32, 64, 128, 256])
+
+        try:
+            # Train model
+            model = train_multi_arch_regressor(
+                X_train,
+                y_train,
+                architecture_type=architecture_type,
+                arch_params=params,
+                learning_rate=learning_rate,
+                batch_size=batch_size,
+                epochs=100,  # Reduced for optimization
+                verbose=False,
+            )
+
+            # Evaluate
+            from evaluate import evaluate_model
+
+            val_results = evaluate_model(
+                model, X_val, y_val, split_name="val", verbose=False
+            )
+
+            metric_value = val_results.metrics.get(metric, float("inf"))
+
+            # For R² metrics, negate since Optuna minimizes
+            if "r2" in metric:
+                metric_value = -metric_value
+
+            return metric_value
+
+        except Exception as e:
+            print(f"Trial failed: {e}")
+            return float("inf")
+
+    # Create and run study
+    study = optuna.create_study(direction="minimize")
+    study.optimize(objective, n_trials=n_trials)
+
+    return study.best_params, study

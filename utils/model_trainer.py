@@ -1,5 +1,6 @@
 import time
 import joblib
+from models import torch_model
 from models.rf_model import train_random_forest
 from models.linear_model import train_linear_model
 from models.torch_model import train_torch_regressor
@@ -63,25 +64,17 @@ def train_model(args, X_train, y_train, X_val, y_val, X_test, y_test):
 
     elif args.model == "torch":
         device = get_device(args)
-        print(f"Training PyTorch model on {device}...")
-
-        # Extract PyTorch-specific parameters from args
         torch_params = {
             "epochs": args.epochs,
             "batch_size": args.batch_size,
             "device": device,
+            "architecture_type": getattr(
+                args, "architecture", "embedding_regressor"
+            ),
         }
 
-        # Add additional parameters if they were optimized
-        for param in ["learning_rate", "hidden_dims", "dropout_rate"]:
-            if hasattr(args, param):
-                torch_params[param] = getattr(args, param)
-
+        # Use existing function with new parameter
         model = train_torch_regressor(X_train, y_train, **torch_params)
-
-        # Store model path in training_metrics for later use
-        if hasattr(model, "training_metrics"):
-            model.training_metrics["model_path"] = get_model_path(args)
 
     elif args.model in ("ridge", "lasso"):
         print("Training linear model...")

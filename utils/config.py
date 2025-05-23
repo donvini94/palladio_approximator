@@ -24,6 +24,20 @@ def parse_args():
         default="bert",
         help="Embedding model type to use (tfidf, bert, or llama)",
     )
+    parser.add_argument(
+        "--architecture",
+        type=str,
+        choices=[
+            "standard",
+            "residual",
+            "attention",
+            "ensemble",
+            "variational",
+            "adaptive",
+        ],
+        default="standard",
+        help="Neural network architecture type",
+    )
     # LLaMA model options
     parser.add_argument(
         "--llama_model",
