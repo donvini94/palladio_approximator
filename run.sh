@@ -56,7 +56,7 @@ if [[ "$1" == "batch-experiments" ]]; then
     # Get optional settings
     MODES=${2:-"summary"}
     EMBEDDINGS=${3:-"tfidf bert "}
-    MODELS=${4:-"ridge lasso torch"}
+    MODELS=${4:-"ridge lasso torch svm"}
 
     echo "====================================="
     echo "Starting batch experiments"
@@ -184,6 +184,35 @@ if [[ "$1" == "batch-experiments" ]]; then
                                 SUCCESS=$((SUCCESS + 1))
                             else
                                 echo "❌ Experiment failed: $MODEL (batch_size=$BATCH_SIZE, epochs=$EPOCHS) + $EMBEDDING + $MODE" | tee -a "$LOG_FILE"
+                            fi
+                        done
+                    done
+                elif [[ "$MODEL" == "svm" ]]; then
+                    # Try different hyperparameters for SVM
+                    for C in 0.1 1.0 10.0; do
+                        for KERNEL in linear rbf; do
+                            echo "Running SVM with C=$C, kernel=$KERNEL" | tee -a "$LOG_FILE"
+
+                            # Run training with SVM parameters
+                            docker run --rm \
+                                --device=nvidia.com/gpu=all \
+                                -v "$(pwd)":/app \
+                                -v "$(pwd)/data":/app/data \
+                                -v "$(pwd)/mlruns":/app/mlruns \
+                                -w /app \
+                                registry.dumusstbereitsein.de/palladio_approximator python3 train.py \
+                                --model $MODEL \
+                                --embedding $EMBEDDING \
+                                --prediction_mode $MODE \
+                                --C $C \
+                                --kernel $KERNEL \
+                                --save_features
+
+                            if [ $? -eq 0 ]; then
+                                echo "✅ Experiment successful: $MODEL (C=$C, kernel=$KERNEL) + $EMBEDDING + $MODE" | tee -a "$LOG_FILE"
+                                SUCCESS=$((SUCCESS + 1))
+                            else
+                                echo "❌ Experiment failed: $MODEL (C=$C, kernel=$KERNEL) + $EMBEDDING + $MODE" | tee -a "$LOG_FILE"
                             fi
                         done
                     done
@@ -326,13 +355,13 @@ echo "  bash                 Start a bash shell in the container"
 echo "  check-gpu            Check if GPU is available and working"
 echo "  mlflow               Start MLflow UI on port 5000"
 echo "  train [model] [embedding] [mode]   Train a model"
-echo "    model: rf (default), ridge, lasso, torch"
+echo "    model: rf (default), ridge, lasso, torch, svm"
 echo "    embedding: tfidf (default), bert, llama"
 echo "    mode: summary (default)"
 echo "  batch-experiments [modes] [embeddings] [models]   Run a series of experiments with all combinations"
 echo "    modes: space-separated list (default: \"summary\")"
 echo "    embeddings: space-separated list (default: \"tfidf bert llama\")"
-echo "    models: space-separated list (default: \"rf ridge lasso torch\")"
+echo "    models: space-separated list (default: \"rf ridge lasso torch svm\")"
 echo "  summarize [options]  Generate a summary of experiment results from MLflow"
 echo "    --model MODEL      Filter results by model type"
 echo "    --embedding EMB    Filter results by embedding type"

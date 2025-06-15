@@ -6,6 +6,7 @@ import mlflow
 from models import torch_model
 from models.rf_model import train_random_forest
 from models.linear_model import train_linear_model
+from models.svm_model import train_svm
 from models.torch_model import (
     train_torch_regressor,
     compare_architectures,
@@ -111,9 +112,22 @@ def train_model(args, X_train, y_train, X_val, y_val, X_test, y_test):
                 linear_params[param] = getattr(args, param)
 
         model = train_linear_model(X_train, y_train, **linear_params)
+
+    elif args.model == "svm":
+        print("Training SVM model...")
+
+        # Extract SVM-specific parameters from args
+        svm_params = {"C": getattr(args, "C", 1.0), "epsilon": getattr(args, "epsilon", 0.1)}
+
+        # Add additional parameters if they were optimized
+        for param in ["kernel", "gamma", "degree"]:
+            if hasattr(args, param):
+                svm_params[param] = getattr(args, param)
+
+        model = train_svm(X_train, y_train, **svm_params)
     else:
         raise ValueError(
-            "Unsupported model type. Choose 'rf', 'torch', 'ridge', or 'lasso'"
+            "Unsupported model type. Choose 'rf', 'torch', 'ridge', 'lasso', or 'svm'"
         )
 
     print(f"=== Model training completed at {time.strftime('%H:%M:%S')} ===")

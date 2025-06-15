@@ -11,7 +11,6 @@ This project predicts system performance metrics (avg/min/max response time) fro
   - `TF-IDF`
   - `BERT (bert-base-uncased)`
   - `LLaMA` (Code-LLaMA 7B)
-    - Supports pre-computed embeddings to avoid GPU memory issues
 - 🧠 Model types:
   - `Random Forest`
   - `Ridge` / `Lasso` Regression
@@ -30,9 +29,7 @@ palladio_approximator/
 │   └── measurements/       # .csv files (Response Time [s])
 ├── dataset.py              # Loads and preprocesses DSL + CSV
 ├── feature_extraction.py   # TF-IDF, BERT, and LLaMA embeddings
-├── precompute_llama_embeddings.py  # Generate LLaMA embeddings efficiently
 ├── features/
-│   └── llama_embeddings/   # Pre-computed LLaMA embeddings
 ├── models/
 │   ├── rf_model.py         # Random forest trainer
 │   ├── linear_model.py     # Ridge / Lasso trainer
@@ -123,17 +120,6 @@ python train.py --model rf --embedding tfidf --no_load_dataset --no_save_dataset
 
 ---
 
-## 🔬 Evaluation Script
-
-You can import `evaluate.py` in any script:
-```python
-from evaluate import evaluate_model
-results = evaluate_model(model, X_val, y_val, split_name="val")
-```
-This prints and returns MSE & MAE for each target (avg, min, max).
-
----
-
 ## 📌 Notes on Reproducibility
 - All model hyperparameters are logged.
 - `--use_mlflow` stores experiments with:
@@ -145,12 +131,3 @@ This prints and returns MSE & MAE for each target (avg, min, max).
 - This enables detailed experiment comparisons in the MLflow UI.
 
 ---
-
-## ⏭ Coming Soon
-- `--prediction_mode timeseries` for predicting values at individual timesteps
-- Cross-validation scripts and more model types (e.g. MLPs)
-
----
-
-## 📫 Questions?
-Open an issue or reach out!

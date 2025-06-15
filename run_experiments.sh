@@ -49,7 +49,7 @@ RUN_SCRIPT="${SCRIPT_DIR}/run.sh"
 case $BATCH_NAME in
     "full")
         echo "Running FULL experiment batch (all models, all embeddings)"
-        bash "${RUN_SCRIPT}" batch-experiments "summary" "tfidf bert llama" "rf ridge lasso torch"
+        bash "${RUN_SCRIPT}" batch-experiments "summary" "tfidf bert llama" "rf ridge lasso torch svm"
         ;;
     "quick")
         echo "Running QUICK experiment batch (limited parameters)"
@@ -77,8 +77,8 @@ case $BATCH_NAME in
         read -p "Embeddings (space-separated, e.g., 'tfidf bert llama'): " EMBEDDINGS
         EMBEDDINGS=${EMBEDDINGS:-"tfidf bert llama"}
         
-        read -p "Models (space-separated, e.g., 'rf ridge lasso torch'): " MODELS
-        MODELS=${MODELS:-"rf ridge lasso torch"}
+        read -p "Models (space-separated, e.g., 'rf ridge lasso torch svm'): " MODELS
+        MODELS=${MODELS:-"rf ridge lasso torch svm"}
         
         echo "Running CUSTOM experiment batch:"
         echo "  Modes: $MODES"
