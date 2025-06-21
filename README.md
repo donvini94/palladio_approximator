@@ -131,3 +131,157 @@ python train.py --model rf --embedding tfidf --no_load_dataset --no_save_dataset
 - This enables detailed experiment comparisons in the MLflow UI.
 
 ---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  File Breakdown & Usage Guide
+
+  1. Core Training & Experiment Files
+
+  train.py - Main training script
+  - Purpose: Train models and log to MLflow
+  - Usage: python train.py --model rf --embedding tfidf --prediction_mode summary
+  - Output: Model artifacts, MLflow metrics
+
+  summarize_experiments.py - Experiment analysis
+  - Purpose: Extract and summarize all MLflow experiments
+  - Usage: python summarize_experiments.py --output results.csv --format both
+  - Output: CSV summaries, markdown reports
+
+  2. Visualization & Figure Generation
+
+  utils/visualize.py - Main visualization module
+  - Purpose: Generate all plots and figures
+  - Functions:
+    - create_experiment_dashboard() - Overall performance dashboard
+    - prediction_error_analysis() - Prediction vs actual plots
+    - visualize_embedding_space() - Embedding visualizations
+    - generate_learning_curves() - Learning curve analysis
+
+  visualize_training.py - Training visualization script
+  - Purpose: Visualize training metrics from MLflow
+  - Usage: python visualize_training.py
+  - Output: Training loss curves, metric plots
+
+  3. Analysis & Metrics Files
+
+  analyze.py - Deep analysis script
+  - Purpose: Comprehensive model analysis
+  - Usage: python analyze.py --model_path model.pkl
+  - Output: Performance analysis, error breakdowns
+
+  utils/metrics_context.py - Advanced metrics
+  - Purpose: Baseline comparisons, performance interpretation
+  - Functions: Baseline metrics, normalized metrics, performance categorization
+
+  4. Data Processing
+
+  dataset.py - Dataset management
+  - Purpose: Load/process Palladio data
+  - Auto-used: By train.py and other scripts
+
+  feature_extraction.py - Feature generation
+  - Purpose: TF-IDF, BERT, LLaMA embeddings
+  - Auto-used: By train.py
+
+  How to Get Your Metrics & Figures
+
+  Step 1: Train Models
+
+  # Train different model configurations
+  python train.py --model rf --embedding tfidf --use_mlflow
+  python train.py --model svm --embedding bert --use_mlflow
+  python train.py --model torch --embedding llama --use_mlflow
+
+  Step 2: Generate Experiment Summary
+
+  # Get comprehensive experiment results
+  python summarize_experiments.py --output thesis_results --format both
+
+  # Filter specific models
+  python summarize_experiments.py --filter-model rf --output rf_results.csv
+
+  Step 3: Generate Figures
+
+  # Method 1: Use visualization test script
+  python run_visualization_test.sh
+
+  # Method 2: Create custom visualizations
+  python -c "
+  from utils.visualize import create_experiment_dashboard, prediction_error_analysis
+  create_experiment_dashboard()  # Creates performance comparison plots
+  "
+
+  # Method 3: Generate training curves
+  python visualize_training.py
+
+  Step 4: Analysis & Interpretation
+
+  # Deep analysis of best model
+  python analyze.py --model_path best_model.pkl
+
+  # Get baseline comparisons and interpretations
+  python -c "
+  from utils.metrics_context import get_baseline_metrics, create_metrics_interpretation
+  # [analysis code]
+  "
+
+  Expected Output Locations
+
+  - Figures: figures/ directory
+    - performance/ - Model comparison plots
+    - predictions/ - Prediction vs actual plots
+    - embeddings/ - Embedding visualizations
+    - learning_curves/ - Training progression plots
+  - Experiment Data:
+    - experiment_summary_[timestamp].csv - All experiments
+    - experiment_summary_[timestamp].md - Markdown report
+  - MLflow: mlruns/ directory (view with mlflow ui)
+
+  Quick Start for Thesis Figures
+
+  # 1. Train a few models
+  python train.py --model rf --embedding tfidf
+  python train.py --model svm --embedding bert
+  python train.py --model torch --embedding llama
+
+  # 2. Generate all figures and summaries
+  python summarize_experiments.py --format both
+  python run_visualization_test.sh
+
+  # 3. Check outputs
+  ls figures/  # Your plots are here
+  cat experiment_summary_*.md  # Your results summary

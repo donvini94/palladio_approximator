@@ -26,6 +26,7 @@ def log_common_parameters(args):
         "model": args.model,
         "embedding": args.embedding,
         "prediction_mode": args.prediction_mode,
+        "normalize_targets": getattr(args, 'normalize_targets', False),
     }
 
     # Add parameters specific to different model types

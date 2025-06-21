@@ -190,6 +190,13 @@ def parse_args():
         help="Load features from disk instead of extracting",
     )
 
+    # Target normalization
+    parser.add_argument(
+        "--normalize_targets",
+        action="store_true",
+        help="Normalize target values (response times) using StandardScaler",
+    )
+
     # MLflow
     parser.add_argument(
         "--no_mlflow", dest="use_mlflow", action="store_false", help="Disable MLflow"
@@ -217,6 +224,7 @@ def parse_args():
         load_features=False,
         save_dataset=True,
         load_dataset=True,
+        normalize_targets=False,
         optimize_hyperparameters=False,
         compare_architectures=False,
         optimize_architecture=False,

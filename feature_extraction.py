@@ -6,6 +6,7 @@ This module provides simplified, scientifically sound feature extraction methods
 """
 
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.preprocessing import StandardScaler
 import numpy as np
 from transformers import (
     AutoTokenizer,
@@ -72,7 +73,7 @@ def extract_features(args, device):
 
         elif args.embedding == "bert":
             return build_bert_features(
-                train_samples, val_samples, test_samples, device, chunking_config
+                train_samples, val_samples, test_samples, device, chunking_config, args
             )
 
         elif args.embedding == "llama":
@@ -88,9 +89,71 @@ def extract_features(args, device):
         raise
 
 
-def extract_targets(df):
-    """Extract avg response time from dataframe."""
-    return df["avg_resp_time"].to_numpy()
+def extract_targets(df, normalize=False, target_scaler=None):
+    """Extract avg response time from dataframe.
+    
+    Args:
+        df: DataFrame containing target values
+        normalize: Whether to normalize the targets
+        target_scaler: Pre-fitted scaler for validation/test sets
+        
+    Returns:
+        tuple: (targets, scaler) where scaler is None if normalize=False
+    """
+    targets = df["avg_resp_time"].to_numpy()
+    
+    if not normalize:
+        return targets, None
+    
+    # Reshape for sklearn scaler (expects 2D array)
+    targets_reshaped = targets.reshape(-1, 1)
+    
+    if target_scaler is None:
+        # Training set: fit new scaler
+        scaler = StandardScaler()
+        targets_normalized = scaler.fit_transform(targets_reshaped).flatten()
+        return targets_normalized, scaler
+    else:
+        # Validation/test set: use existing scaler
+        targets_normalized = target_scaler.transform(targets_reshaped).flatten()
+        return targets_normalized, target_scaler
+
+
+def inverse_transform_predictions(predictions, embedding_model, normalize_targets=False):
+    """Inverse transform predictions if target normalization was used.
+    
+    Args:
+        predictions: Model predictions (normalized if normalize_targets=True)
+        embedding_model: Tuple containing model artifacts including target_scaler
+        normalize_targets: Whether targets were normalized during training
+        
+    Returns:
+        predictions: Predictions in original scale
+    """
+    if not normalize_targets:
+        return predictions
+    
+    # Extract target scaler from embedding model tuple
+    target_scaler = None
+    if isinstance(embedding_model, tuple):
+        # Check if the last element is a StandardScaler (target scaler)
+        for item in embedding_model:
+            if hasattr(item, 'inverse_transform') and hasattr(item, 'scale_'):
+                target_scaler = item
+                break
+    
+    if target_scaler is None:
+        print("Warning: Target normalization was used but scaler not found in embedding_model")
+        return predictions
+    
+    # Reshape predictions for inverse transform
+    if len(predictions.shape) == 1:
+        predictions_reshaped = predictions.reshape(-1, 1)
+        predictions_original = target_scaler.inverse_transform(predictions_reshaped).flatten()
+    else:
+        predictions_original = target_scaler.inverse_transform(predictions)
+    
+    return predictions_original
 
 
 def build_tfidf_features(train_samples, val_samples, test_samples, args):
@@ -161,16 +224,24 @@ def build_tfidf_features(train_samples, val_samples, test_samples, args):
     else:
         embedding_model = vectorizer
 
-    # Extract targets
-    y_train = extract_targets(train_samples)
-    y_val = extract_targets(val_samples)
-    y_test = extract_targets(test_samples)
+    # Extract targets with optional normalization
+    normalize_targets = getattr(args, 'normalize_targets', False)
+    y_train, target_scaler = extract_targets(train_samples, normalize=normalize_targets)
+    y_val, _ = extract_targets(val_samples, normalize=normalize_targets, target_scaler=target_scaler)
+    y_test, _ = extract_targets(test_samples, normalize=normalize_targets, target_scaler=target_scaler)
+
+    # Include target scaler in embedding model tuple if normalization is used
+    if normalize_targets and target_scaler is not None:
+        if isinstance(embedding_model, tuple):
+            embedding_model = embedding_model + (target_scaler,)
+        else:
+            embedding_model = (embedding_model, target_scaler)
 
     return X_train, y_train, X_val, y_val, X_test, y_test, embedding_model
 
 
 def build_bert_features(
-    train_samples, val_samples, test_samples, device, chunking_config
+    train_samples, val_samples, test_samples, device, chunking_config, args
 ):
     """
     Build BERT features with simplified, scientifically sound chunking.
@@ -361,23 +432,31 @@ def build_bert_features(
     # Process all datasets
     print(f"Processing {len(train_samples)} training samples...")
     X_train = encode_with_simplified_chunking(train_samples)
-    y_train = extract_targets(train_samples)
 
     print(f"Processing {len(val_samples)} validation samples...")
     X_val = encode_with_simplified_chunking(val_samples)
-    y_val = extract_targets(val_samples)
 
     print(f"Processing {len(test_samples)} test samples...")
     X_test = encode_with_simplified_chunking(test_samples)
-    y_test = extract_targets(test_samples)
 
     print(f"BERT feature extraction complete. Shape: {X_train.shape}")
+
+    # Extract targets with optional normalization
+    normalize_targets = getattr(args, 'normalize_targets', False)
+    y_train, target_scaler = extract_targets(train_samples, normalize=normalize_targets)
+    y_val, _ = extract_targets(val_samples, normalize=normalize_targets, target_scaler=target_scaler)
+    y_test, _ = extract_targets(test_samples, normalize=normalize_targets, target_scaler=target_scaler)
+
+    # Include target scaler in embedding model tuple if normalization is used
+    embedding_model = (tokenizer, model)
+    if normalize_targets and target_scaler is not None:
+        embedding_model = embedding_model + (target_scaler,)
 
     # Final cleanup
     if device == "cuda":
         torch.cuda.empty_cache()
 
-    return X_train, y_train, X_val, y_val, X_test, y_test, (tokenizer, model)
+    return X_train, y_train, X_val, y_val, X_test, y_test, embedding_model
 
 
 def build_llama_features(
@@ -529,20 +608,28 @@ def build_llama_features(
     # Process datasets
     print(f"Processing {len(train_samples)} training samples...")
     X_train = encode_with_llama_simplified(train_samples)
-    y_train = extract_targets(train_samples)
 
     print(f"Processing {len(val_samples)} validation samples...")
     X_val = encode_with_llama_simplified(val_samples)
-    y_val = extract_targets(val_samples)
 
     print(f"Processing {len(test_samples)} test samples...")
     X_test = encode_with_llama_simplified(test_samples)
-    y_test = extract_targets(test_samples)
 
     print(f"LLaMA feature extraction complete. Shape: {X_train.shape}")
+
+    # Extract targets with optional normalization
+    normalize_targets = getattr(args, 'normalize_targets', False)
+    y_train, target_scaler = extract_targets(train_samples, normalize=normalize_targets)
+    y_val, _ = extract_targets(val_samples, normalize=normalize_targets, target_scaler=target_scaler)
+    y_test, _ = extract_targets(test_samples, normalize=normalize_targets, target_scaler=target_scaler)
+
+    # Include target scaler in embedding model tuple if normalization is used
+    embedding_model = (tokenizer, model)
+    if normalize_targets and target_scaler is not None:
+        embedding_model = embedding_model + (target_scaler,)
 
     # Final cleanup
     if device == "cuda":
         torch.cuda.empty_cache()
 
-    return X_train, y_train, X_val, y_val, X_test, y_test, (tokenizer, model)
+    return X_train, y_train, X_val, y_val, X_test, y_test, embedding_model
