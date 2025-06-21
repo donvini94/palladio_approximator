@@ -84,12 +84,12 @@ run_experiment_set() {
     local baseline_model="$3"
     local baseline_embedding="$4"
     local n_runs="$5"
-    
+
     local dry_run_flag=""
     if [ "$dry_run" = "true" ]; then
         dry_run_flag="--dry-run"
     fi
-    
+
     local baseline_args=""
     if [ -n "$baseline_model" ]; then
         baseline_args="$baseline_args --baseline-model $baseline_model"
@@ -97,118 +97,118 @@ run_experiment_set() {
     if [ -n "$baseline_embedding" ]; then
         baseline_args="$baseline_args --baseline-embedding $baseline_embedding"
     fi
-    
+
     local n_runs_flag="--n-runs $n_runs"
-    
+
     case "$set_name" in
-        "svm-regularization")
-            print_info "Running SVM regularization parameter (C) analysis..."
-            $SWEEP_SCRIPT --sweep-type single-param --param C --values "0.01,0.1,1.0,10.0,100.0" $baseline_args $dry_run_flag $n_runs_flag
-            ;;
-            
-        "svm-kernels")
-            print_info "Running SVM kernel comparison analysis..."
-            $SWEEP_SCRIPT --sweep-type single-param --param kernel --values "linear,rbf,poly,sigmoid" $baseline_args $dry_run_flag $n_runs_flag
-            ;;
-            
-        "svm-epsilon")
-            print_info "Running SVM epsilon parameter analysis..."
-            $SWEEP_SCRIPT --sweep-type single-param --param epsilon --values "0.001,0.01,0.1,1.0" $baseline_args $dry_run_flag $n_runs_flag
-            ;;
-            
-        "svm-gamma")
-            print_info "Running SVM gamma parameter analysis..."
-            $SWEEP_SCRIPT --sweep-type single-param --param gamma --values "scale,auto,0.001,0.01,0.1,1.0" $baseline_args $dry_run_flag $n_runs_flag
-            ;;
-            
-        "svm-analysis")
-            print_info "Running complete SVM analysis (4 parameter sweeps)..."
-            run_experiment_set "svm-regularization" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
-            run_experiment_set "svm-kernels" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
-            run_experiment_set "svm-epsilon" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
-            run_experiment_set "svm-gamma" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
-            ;;
-            
-        "model-types")
-            print_info "Running model architecture comparison..."
-            $SWEEP_SCRIPT --sweep-type single-param --param model --values "rf,svm,ridge,lasso,torch" $baseline_args $dry_run_flag $n_runs_flag
-            ;;
-            
-        "embedding-impact")
-            print_info "Running embedding comparison analysis..."
-            $SWEEP_SCRIPT --sweep-type single-param --param embedding --values "tfidf,bert,llama" $baseline_args $dry_run_flag $n_runs_flag
-            ;;
-            
-        "model-comparison")
-            print_info "Running complete model comparison analysis..."
-            run_experiment_set "model-types" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
-            run_experiment_set "embedding-impact" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
-            ;;
-            
-        "normalization-impact")
-            print_info "Running target normalization impact analysis..."
-            $SWEEP_SCRIPT --sweep-type single-param --param normalize_targets --values "true,false" $baseline_args $dry_run_flag $n_runs_flag
-            ;;
-            
-        "preprocessing-analysis")
-            print_info "Running preprocessing impact analysis..."
-            run_experiment_set "normalization-impact" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
-            ;;
-            
-        "rf-trees")
-            print_info "Running Random Forest trees optimization..."
-            $SWEEP_SCRIPT --sweep-type single-param --param n_estimators --values "50,100,200,300,500" --baseline-model rf $baseline_args $dry_run_flag $n_runs_flag
-            ;;
-            
-        "rf-optimization")
-            print_info "Running Random Forest optimization..."
-            run_experiment_set "rf-trees" "$dry_run" "rf" "$baseline_embedding" "$n_runs"
-            ;;
-            
-        "linear-regularization")
-            print_info "Running linear model regularization analysis..."
-            print_info "Testing Ridge regression..."
-            $SWEEP_SCRIPT --sweep-type single-param --param alpha --values "0.001,0.01,0.1,1.0,10.0,100.0" --baseline-model ridge $baseline_args $dry_run_flag $n_runs_flag
-            print_info "Testing Lasso regression..."
-            $SWEEP_SCRIPT --sweep-type single-param --param alpha --values "0.001,0.01,0.1,1.0,10.0,100.0" --baseline-model lasso $baseline_args $dry_run_flag $n_runs_flag
-            ;;
-            
-        "linear-analysis")
-            print_info "Running linear model analysis..."
-            run_experiment_set "linear-regularization" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
-            ;;
-            
-        "nn-batch-size")
-            print_info "Running neural network batch size analysis..."
-            $SWEEP_SCRIPT --sweep-type single-param --param batch_size --values "32,64,128,256,512" --baseline-model torch $baseline_args $dry_run_flag $n_runs_flag
-            ;;
-            
-        "nn-epochs")
-            print_info "Running neural network training duration analysis..."
-            $SWEEP_SCRIPT --sweep-type single-param --param epochs --values "50,100,200,300" --baseline-model torch $baseline_args $dry_run_flag $n_runs_flag
-            ;;
-            
-        "neural-optimization")
-            print_info "Running neural network optimization..."
-            run_experiment_set "nn-batch-size" "$dry_run" "torch" "$baseline_embedding" "$n_runs"
-            run_experiment_set "nn-epochs" "$dry_run" "torch" "$baseline_embedding" "$n_runs"
-            ;;
-            
-        "complete-analysis")
-            print_info "Running complete thesis analysis (WARNING: This will take hours!)..."
-            run_experiment_set "svm-analysis" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
-            run_experiment_set "model-comparison" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
-            run_experiment_set "preprocessing-analysis" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
-            run_experiment_set "rf-optimization" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
-            run_experiment_set "linear-analysis" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
-            run_experiment_set "neural-optimization" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
-            ;;
-            
-        *)
-            print_error "Unknown experiment set: $set_name"
-            show_usage
-            exit 1
-            ;;
+    "svm-regularization")
+        print_info "Running SVM regularization parameter (C) analysis..."
+        $SWEEP_SCRIPT --sweep-type single-param --param C --values "0.01,0.1,1.0,10.0,100.0" $baseline_args $dry_run_flag $n_runs_flag
+        ;;
+
+    "svm-kernels")
+        print_info "Running SVM kernel comparison analysis..."
+        $SWEEP_SCRIPT --sweep-type single-param --param kernel --values "linear,rbf,poly,sigmoid" $baseline_args $dry_run_flag $n_runs_flag
+        ;;
+
+    "svm-epsilon")
+        print_info "Running SVM epsilon parameter analysis..."
+        $SWEEP_SCRIPT --sweep-type single-param --param epsilon --values "0.001,0.01,0.1,1.0" $baseline_args $dry_run_flag $n_runs_flag
+        ;;
+
+    "svm-gamma")
+        print_info "Running SVM gamma parameter analysis..."
+        $SWEEP_SCRIPT --sweep-type single-param --param gamma --values "scale,auto" $baseline_args $dry_run_flag $n_runs_flag
+        ;;
+
+    "svm-analysis")
+        print_info "Running complete SVM analysis (4 parameter sweeps)..."
+        run_experiment_set "svm-regularization" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
+        run_experiment_set "svm-kernels" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
+        run_experiment_set "svm-epsilon" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
+        run_experiment_set "svm-gamma" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
+        ;;
+
+    "model-types")
+        print_info "Running model architecture comparison..."
+        $SWEEP_SCRIPT --sweep-type single-param --param model --values "rf,svm,ridge,lasso,torch" $baseline_args $dry_run_flag $n_runs_flag
+        ;;
+
+    "embedding-impact")
+        print_info "Running embedding comparison analysis..."
+        $SWEEP_SCRIPT --sweep-type single-param --param embedding --values "tfidf,bert,llama" $baseline_args $dry_run_flag $n_runs_flag
+        ;;
+
+    "model-comparison")
+        print_info "Running complete model comparison analysis..."
+        run_experiment_set "model-types" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
+        run_experiment_set "embedding-impact" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
+        ;;
+
+    "normalization-impact")
+        print_info "Running target normalization impact analysis..."
+        $SWEEP_SCRIPT --sweep-type single-param --param normalize_targets --values "true,false" $baseline_args $dry_run_flag $n_runs_flag
+        ;;
+
+    "preprocessing-analysis")
+        print_info "Running preprocessing impact analysis..."
+        run_experiment_set "normalization-impact" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
+        ;;
+
+    "rf-trees")
+        print_info "Running Random Forest trees optimization..."
+        $SWEEP_SCRIPT --sweep-type single-param --param n_estimators --values "50,100,200,300,500" --baseline-model rf $baseline_args $dry_run_flag $n_runs_flag
+        ;;
+
+    "rf-optimization")
+        print_info "Running Random Forest optimization..."
+        run_experiment_set "rf-trees" "$dry_run" "rf" "$baseline_embedding" "$n_runs"
+        ;;
+
+    "linear-regularization")
+        print_info "Running linear model regularization analysis..."
+        print_info "Testing Ridge regression..."
+        $SWEEP_SCRIPT --sweep-type single-param --param alpha --values "0.001,0.01,0.1,1.0,10.0,100.0" --baseline-model ridge $baseline_args $dry_run_flag $n_runs_flag
+        print_info "Testing Lasso regression..."
+        $SWEEP_SCRIPT --sweep-type single-param --param alpha --values "0.001,0.01,0.1,1.0,10.0,100.0" --baseline-model lasso $baseline_args $dry_run_flag $n_runs_flag
+        ;;
+
+    "linear-analysis")
+        print_info "Running linear model analysis..."
+        run_experiment_set "linear-regularization" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
+        ;;
+
+    "nn-batch-size")
+        print_info "Running neural network batch size analysis..."
+        $SWEEP_SCRIPT --sweep-type single-param --param batch_size --values "32,64,128,256,512" --baseline-model torch $baseline_args $dry_run_flag $n_runs_flag
+        ;;
+
+    "nn-epochs")
+        print_info "Running neural network training duration analysis..."
+        $SWEEP_SCRIPT --sweep-type single-param --param epochs --values "50,100,200,300" --baseline-model torch $baseline_args $dry_run_flag $n_runs_flag
+        ;;
+
+    "neural-optimization")
+        print_info "Running neural network optimization..."
+        run_experiment_set "nn-batch-size" "$dry_run" "torch" "$baseline_embedding" "$n_runs"
+        run_experiment_set "nn-epochs" "$dry_run" "torch" "$baseline_embedding" "$n_runs"
+        ;;
+
+    "complete-analysis")
+        print_info "Running complete thesis analysis (WARNING: This will take hours!)..."
+        run_experiment_set "svm-analysis" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
+        run_experiment_set "model-comparison" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
+        run_experiment_set "preprocessing-analysis" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
+        run_experiment_set "rf-optimization" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
+        run_experiment_set "linear-analysis" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
+        run_experiment_set "neural-optimization" "$dry_run" "$baseline_model" "$baseline_embedding" "$n_runs"
+        ;;
+
+    *)
+        print_error "Unknown experiment set: $set_name"
+        show_usage
+        exit 1
+        ;;
     esac
 }
 
@@ -221,35 +221,35 @@ N_RUNS="3"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --experiment-set)
-            EXPERIMENT_SET="$2"
-            shift 2
-            ;;
-        --dry-run)
-            DRY_RUN="true"
-            shift
-            ;;
-        --baseline-model)
-            BASELINE_MODEL="$2"
-            shift 2
-            ;;
-        --baseline-embedding)
-            BASELINE_EMBEDDING="$2"
-            shift 2
-            ;;
-        --n-runs)
-            N_RUNS="$2"
-            shift 2
-            ;;
-        -h|--help)
-            show_usage
-            exit 0
-            ;;
-        *)
-            echo "Unknown option: $1"
-            show_usage
-            exit 1
-            ;;
+    --experiment-set)
+        EXPERIMENT_SET="$2"
+        shift 2
+        ;;
+    --dry-run)
+        DRY_RUN="true"
+        shift
+        ;;
+    --baseline-model)
+        BASELINE_MODEL="$2"
+        shift 2
+        ;;
+    --baseline-embedding)
+        BASELINE_EMBEDDING="$2"
+        shift 2
+        ;;
+    --n-runs)
+        N_RUNS="$2"
+        shift 2
+        ;;
+    -h | --help)
+        show_usage
+        exit 0
+        ;;
+    *)
+        echo "Unknown option: $1"
+        show_usage
+        exit 1
+        ;;
     esac
 done
 

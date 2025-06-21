@@ -82,7 +82,7 @@ show_usage() {
     echo "    C                         Regularization: 0.01,0.1,1.0,10.0,100.0"
     echo "    epsilon                   SVR epsilon: 0.001,0.01,0.1,1.0"
     echo "    kernel                    Kernel type: linear,rbf,poly,sigmoid"
-    echo "    gamma                     Kernel coefficient: scale,auto,0.001,0.01,0.1,1.0"
+    echo "    gamma                     Kernel coefficient: scale,auto"
     echo "    degree                    Poly kernel degree: 2,3,4,5"
     echo ""
     echo "  Random Forest Parameters:"
@@ -120,7 +120,7 @@ build_experiment_command() {
     local embedding="$2"
     local normalize_targets="$3"
     local extra_args="$4"
-    
+
     local cmd="docker run --rm \
         --device=nvidia.com/gpu=all \
         -v \"$(pwd)\":/app \
@@ -131,13 +131,13 @@ build_experiment_command() {
         --model $model \
         --embedding $embedding \
         --prediction_mode $DEFAULT_PREDICTION_MODE"
-    
+
     if [ "$normalize_targets" = "true" ]; then
         cmd="$cmd --normalize_targets"
     fi
-    
+
     cmd="$cmd $extra_args"
-    
+
     echo "$cmd"
 }
 
@@ -146,18 +146,18 @@ run_experiment() {
     local experiment_name="$1"
     local command="$2"
     local dry_run="$3"
-    
+
     print_info "Running experiment: $experiment_name"
     print_info "Command: $command"
-    
+
     if [ "$dry_run" = "true" ]; then
         print_warning "[DRY RUN] Would execute: $command"
         SUCCESSFUL_EXPERIMENTS=$((SUCCESSFUL_EXPERIMENTS + 1))
         return 0
     fi
-    
+
     TOTAL_EXPERIMENTS=$((TOTAL_EXPERIMENTS + 1))
-    
+
     # Execute the command
     if eval "$command"; then
         print_success "✅ Experiment successful: $experiment_name"
@@ -178,102 +178,102 @@ run_single_param_sweep() {
     local baseline_embedding="$4"
     local dry_run="$5"
     local n_runs="$6"
-    
+
     print_info "Starting single parameter sweep for: $param"
     print_info "Baseline model: $baseline_model, embedding: $baseline_embedding"
     print_info "Values to test: $values"
     print_info "Number of runs per experiment: $n_runs"
-    
+
     # Convert comma-separated values to array
-    IFS=',' read -ra VALUE_ARRAY <<< "$values"
-    
+    IFS=',' read -ra VALUE_ARRAY <<<"$values"
+
     for value in "${VALUE_ARRAY[@]}"; do
         value=$(echo "$value" | xargs) # trim whitespace
-        
+
         # Set up baseline configuration
         local model="$baseline_model"
         local embedding="$baseline_embedding"
         local normalize_targets="$DEFAULT_NORMALIZE_TARGETS"
         local extra_args=""
-        
+
         # Modify the specific parameter being swept
         case "$param" in
-            "model")
-                model="$value"
-                ;;
-            "embedding")
-                embedding="$value"
-                ;;
-            "normalize_targets")
-                normalize_targets="$value"
-                ;;
-            "C")
-                extra_args="--C $value"
-                ;;
-            "epsilon")
-                extra_args="--epsilon $value"
-                ;;
-            "kernel")
-                extra_args="--kernel $value"
-                ;;
-            "gamma")
-                extra_args="--gamma $value"
-                ;;
-            "degree")
-                extra_args="--degree $value"
-                ;;
-            "n_estimators")
-                extra_args="--n_estimators $value"
-                ;;
-            "alpha")
-                extra_args="--alpha $value"
-                ;;
-            "batch_size")
-                extra_args="--batch_size $value"
-                ;;
-            "epochs")
-                extra_args="--epochs $value"
-                ;;
-            *)
-                print_error "Unknown parameter: $param"
-                return 1
-                ;;
+        "model")
+            model="$value"
+            ;;
+        "embedding")
+            embedding="$value"
+            ;;
+        "normalize_targets")
+            normalize_targets="$value"
+            ;;
+        "C")
+            extra_args="--C $value"
+            ;;
+        "epsilon")
+            extra_args="--epsilon $value"
+            ;;
+        "kernel")
+            extra_args="--kernel $value"
+            ;;
+        "gamma")
+            extra_args="--gamma $value"
+            ;;
+        "degree")
+            extra_args="--degree $value"
+            ;;
+        "n_estimators")
+            extra_args="--n_estimators $value"
+            ;;
+        "alpha")
+            extra_args="--alpha $value"
+            ;;
+        "batch_size")
+            extra_args="--batch_size $value"
+            ;;
+        "epochs")
+            extra_args="--epochs $value"
+            ;;
+        *)
+            print_error "Unknown parameter: $param"
+            return 1
+            ;;
         esac
-        
+
         # Build experiment name
         local experiment_name="${param}=${value}_model=${model}_emb=${embedding}_norm=${normalize_targets}"
-        
+
         # Add baseline parameters to extra_args based on model type
         if [ "$param" != "C" ] && [ "$param" != "epsilon" ] && [ "$param" != "kernel" ] && [ "$param" != "gamma" ] && [ "$param" != "degree" ]; then
             case "$model" in
-                "svm")
-                    if [ "$param" != "C" ]; then extra_args="$extra_args --C $DEFAULT_C"; fi
-                    if [ "$param" != "epsilon" ]; then extra_args="$extra_args --epsilon $DEFAULT_EPSILON"; fi
-                    if [ "$param" != "kernel" ]; then extra_args="$extra_args --kernel $DEFAULT_KERNEL"; fi
-                    if [ "$param" != "gamma" ]; then extra_args="$extra_args --gamma $DEFAULT_GAMMA"; fi
-                    if [ "$param" != "degree" ]; then extra_args="$extra_args --degree $DEFAULT_DEGREE"; fi
-                    ;;
-                "rf")
-                    if [ "$param" != "n_estimators" ]; then extra_args="$extra_args --n_estimators $DEFAULT_N_ESTIMATORS"; fi
-                    ;;
-                "ridge"|"lasso")
-                    if [ "$param" != "alpha" ]; then extra_args="$extra_args --alpha $DEFAULT_ALPHA"; fi
-                    ;;
-                "torch")
-                    if [ "$param" != "batch_size" ]; then extra_args="$extra_args --batch_size $DEFAULT_BATCH_SIZE"; fi
-                    if [ "$param" != "epochs" ]; then extra_args="$extra_args --epochs $DEFAULT_EPOCHS"; fi
-                    ;;
+            "svm")
+                if [ "$param" != "C" ]; then extra_args="$extra_args --C $DEFAULT_C"; fi
+                if [ "$param" != "epsilon" ]; then extra_args="$extra_args --epsilon $DEFAULT_EPSILON"; fi
+                if [ "$param" != "kernel" ]; then extra_args="$extra_args --kernel $DEFAULT_KERNEL"; fi
+                if [ "$param" != "gamma" ]; then extra_args="$extra_args --gamma $DEFAULT_GAMMA"; fi
+                if [ "$param" != "degree" ]; then extra_args="$extra_args --degree $DEFAULT_DEGREE"; fi
+                ;;
+            "rf")
+                if [ "$param" != "n_estimators" ]; then extra_args="$extra_args --n_estimators $DEFAULT_N_ESTIMATORS"; fi
+                ;;
+            "ridge" | "lasso")
+                if [ "$param" != "alpha" ]; then extra_args="$extra_args --alpha $DEFAULT_ALPHA"; fi
+                ;;
+            "torch")
+                if [ "$param" != "batch_size" ]; then extra_args="$extra_args --batch_size $DEFAULT_BATCH_SIZE"; fi
+                if [ "$param" != "epochs" ]; then extra_args="$extra_args --epochs $DEFAULT_EPOCHS"; fi
+                ;;
             esac
         fi
-        
+
         # Run experiment multiple times for statistical reliability
         for run_num in $(seq 1 $n_runs); do
             local run_experiment_name="${experiment_name}_run${run_num}"
             local command=$(build_experiment_command "$model" "$embedding" "$normalize_targets" "$extra_args")
-            
+
             print_info "Running experiment $run_num/$n_runs for parameter combination: ${param}=${value}"
             run_experiment "$run_experiment_name" "$command" "$dry_run"
-            
+
             # Add small delay between runs
             if [ "$dry_run" != "true" ]; then
                 sleep 2
@@ -294,47 +294,47 @@ N_RUNS="3"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --sweep-type)
-            SWEEP_TYPE="$2"
-            shift 2
-            ;;
-        --param)
-            PARAM="$2"
-            shift 2
-            ;;
-        --values)
-            VALUES="$2"
-            shift 2
-            ;;
-        --baseline-model)
-            BASELINE_MODEL="$2"
-            shift 2
-            ;;
-        --baseline-embedding)
-            BASELINE_EMBEDDING="$2"
-            shift 2
-            ;;
-        --dry-run)
-            DRY_RUN="true"
-            shift
-            ;;
-        --parallel)
-            PARALLEL="$2"
-            shift 2
-            ;;
-        --n-runs)
-            N_RUNS="$2"
-            shift 2
-            ;;
-        -h|--help)
-            show_usage
-            exit 0
-            ;;
-        *)
-            echo "Unknown option: $1"
-            show_usage
-            exit 1
-            ;;
+    --sweep-type)
+        SWEEP_TYPE="$2"
+        shift 2
+        ;;
+    --param)
+        PARAM="$2"
+        shift 2
+        ;;
+    --values)
+        VALUES="$2"
+        shift 2
+        ;;
+    --baseline-model)
+        BASELINE_MODEL="$2"
+        shift 2
+        ;;
+    --baseline-embedding)
+        BASELINE_EMBEDDING="$2"
+        shift 2
+        ;;
+    --dry-run)
+        DRY_RUN="true"
+        shift
+        ;;
+    --parallel)
+        PARALLEL="$2"
+        shift 2
+        ;;
+    --n-runs)
+        N_RUNS="$2"
+        shift 2
+        ;;
+    -h | --help)
+        show_usage
+        exit 0
+        ;;
+    *)
+        echo "Unknown option: $1"
+        show_usage
+        exit 1
+        ;;
     esac
 done
 
@@ -368,13 +368,13 @@ print_info "========================================="
 
 # Run the sweep
 case "$SWEEP_TYPE" in
-    "single-param")
-        run_single_param_sweep "$PARAM" "$VALUES" "$BASELINE_MODEL" "$BASELINE_EMBEDDING" "$DRY_RUN" "$N_RUNS"
-        ;;
-    *)
-        print_error "Unsupported sweep type: $SWEEP_TYPE"
-        exit 1
-        ;;
+"single-param")
+    run_single_param_sweep "$PARAM" "$VALUES" "$BASELINE_MODEL" "$BASELINE_EMBEDDING" "$DRY_RUN" "$N_RUNS"
+    ;;
+*)
+    print_error "Unsupported sweep type: $SWEEP_TYPE"
+    exit 1
+    ;;
 esac
 
 # Calculate execution time
