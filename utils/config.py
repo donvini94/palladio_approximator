@@ -15,7 +15,10 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, default="data")
     parser.add_argument(
-        "--model", type=str, choices=["rf", "ridge", "lasso", "torch", "svm"], default="torch"
+        "--model",
+        type=str,
+        choices=["rf", "ridge", "lasso", "torch", "svm"],
+        default="torch",
     )
     parser.add_argument(
         "--embedding",
@@ -40,7 +43,7 @@ def parse_args():
         help="Neural network architecture type",
     )
 
-    # NEW: Architecture experiment options
+    # Architecture experiment options
     parser.add_argument(
         "--compare_architectures",
         action="store_true",
@@ -112,13 +115,27 @@ def parse_args():
     # Model hyperparameters
     parser.add_argument("--n_estimators", type=int, default=100)
     parser.add_argument("--alpha", type=float, default=1.0)
-    
+
     # SVM hyperparameters
-    parser.add_argument("--C", type=float, default=1.0, help="Regularization parameter for SVM")
-    parser.add_argument("--epsilon", type=float, default=0.1, help="Epsilon in the epsilon-SVR model")
-    parser.add_argument("--kernel", type=str, choices=["linear", "poly", "rbf", "sigmoid"], default="rbf", help="SVM kernel type")
-    parser.add_argument("--gamma", type=str, default="scale", help="Kernel coefficient for SVM")
-    parser.add_argument("--degree", type=int, default=3, help="Degree of the polynomial kernel function")
+    parser.add_argument(
+        "--C", type=float, default=1.0, help="Regularization parameter for SVM"
+    )
+    parser.add_argument(
+        "--epsilon", type=float, default=0.1, help="Epsilon in the epsilon-SVR model"
+    )
+    parser.add_argument(
+        "--kernel",
+        type=str,
+        choices=["linear", "poly", "rbf", "sigmoid"],
+        default="rbf",
+        help="SVM kernel type",
+    )
+    parser.add_argument(
+        "--gamma", type=str, default="scale", help="Kernel coefficient for SVM"
+    )
+    parser.add_argument(
+        "--degree", type=int, default=3, help="Degree of the polynomial kernel function"
+    )
 
     # PyTorch model parameters
     parser.add_argument("--epochs", type=int, default=100)
@@ -197,9 +214,9 @@ def parse_args():
         use_mlflow=True,
         use_gpu=True,
         save_features=True,
-        load_features=True,
+        load_features=False,
         save_dataset=True,
-        load_dataset=True,
+        load_dataset=False,
         optimize_hyperparameters=False,
         compare_architectures=False,
         optimize_architecture=False,

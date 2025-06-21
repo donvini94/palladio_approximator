@@ -7,7 +7,7 @@ def train_linear_model(X_train, y_train, model_type="ridge", alpha=1.0):
 
     Parameters:
         X_train: Feature matrix
-        y_train: Target matrix (multi-target: avg, min, max response times)
+        y_train: Target array (single target: avg response time)
         model_type (str): 'ridge' or 'lasso'
         alpha (float): Regularization strength
 

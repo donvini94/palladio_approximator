@@ -54,7 +54,7 @@ def parse_args():
 def get_all_runs():
     """Retrieve all runs from MLflow."""
     client = MlflowClient()
-    experiment = client.get_experiment_by_name("palladio-approximation")
+    experiment = client.get_experiment_by_name("thesis")
 
     if not experiment:
         print("No experiments found in MLflow")

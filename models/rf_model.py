@@ -6,8 +6,8 @@ def train_random_forest(X_train, y_train, **kwargs):
     Trains a RandomForestRegressor on the provided data.
 
     Parameters:
-        X_train: TF-IDF feature matrix
-        y_train: Target array with avg/min/max response times
+        X_train: Feature matrix
+        y_train: Target array (single target: avg response time)
         kwargs: Additional keyword args for model (e.g., n_estimators)
 
     Returns:

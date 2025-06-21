@@ -89,8 +89,8 @@ def extract_features(args, device):
 
 
 def extract_targets(df):
-    """Extract avg/min/max response times from dataframe."""
-    return df[["avg_resp_time", "min_resp_time", "max_resp_time"]].to_numpy()
+    """Extract avg response time from dataframe."""
+    return df["avg_resp_time"].to_numpy()
 
 
 def build_tfidf_features(train_samples, val_samples, test_samples, args):

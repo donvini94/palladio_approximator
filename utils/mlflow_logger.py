@@ -4,7 +4,7 @@ import mlflow.sklearn
 import mlflow.pytorch
 
 
-def setup_mlflow(experiment_name="palladio-approximation"):
+def setup_mlflow(experiment_name="thesis"):
     """Set up MLflow experiment tracking.
 
     Args:
