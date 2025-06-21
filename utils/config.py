@@ -216,7 +216,7 @@ def parse_args():
         save_features=True,
         load_features=False,
         save_dataset=True,
-        load_dataset=False,
+        load_dataset=True,
         optimize_hyperparameters=False,
         compare_architectures=False,
         optimize_architecture=False,

@@ -95,6 +95,8 @@ def get_experiment_id(args):
         base_name += f"_n{args.n_estimators}"
     elif args.model in ["ridge", "lasso"]:
         base_name += f"_a{args.alpha}"
+    elif args.model == "svm":
+        base_name += f"_C{args.C}_eps{args.epsilon}_{args.kernel}"
     elif args.model == "torch":
         base_name += f"_b{args.batch_size}_e{args.epochs}"
 

@@ -56,6 +56,23 @@ def log_common_parameters(args):
                 if hasattr(args, param):
                     params[param] = getattr(args, param)
 
+    elif args.model == "svm":
+        params.update(
+            {
+                "model_type": "svm",
+                "C": args.C,
+                "epsilon": args.epsilon,
+                "kernel": args.kernel,
+                "gamma": args.gamma,
+                "degree": args.degree,
+            }
+        )
+
+        # Add optimized parameters if available
+        for param in ["coef0", "shrinking", "tol", "cache_size", "max_iter"]:
+            if hasattr(args, param):
+                params[param] = getattr(args, param)
+
     elif args.model == "torch":
         params.update(
             {

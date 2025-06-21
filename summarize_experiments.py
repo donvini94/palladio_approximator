@@ -321,6 +321,8 @@ def print_summary_to_console(
         cols_to_show.append("n_estimators")
     elif args.filter_model in ["ridge", "lasso"]:
         cols_to_show.append("alpha")
+    elif args.filter_model == "svm":
+        cols_to_show.extend(["C", "epsilon", "kernel", "gamma"])
     elif args.filter_model == "torch":
         cols_to_show.extend(["batch_size", "epochs"])
 
