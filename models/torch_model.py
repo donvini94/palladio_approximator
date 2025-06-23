@@ -25,12 +25,12 @@ from tqdm import tqdm
 class EmbeddingRegressorNet(nn.Module):
     """Enhanced neural network for regression on embeddings, with advanced architecture."""
 
-    def __init__(self, input_dim, output_dim, hidden_dims=[768, 512, 256, 128]):
+    def __init__(self, input_dim, output_dim, hidden_dims=[768, 512, 256, 128], dropout_rate=0.3):
         super().__init__()
 
         self.layers = nn.ModuleList()
         self.activation = nn.LeakyReLU(0.1)  # LeakyReLU for better gradient flow
-        self.input_dropout = nn.Dropout(0.2)  # Initial dropout to reduce overfitting
+        self.input_dropout = nn.Dropout(dropout_rate * 0.6)  # Initial dropout to reduce overfitting
 
         # Batch normalization for input
         self.input_bn = nn.BatchNorm1d(input_dim)
@@ -39,7 +39,7 @@ class EmbeddingRegressorNet(nn.Module):
         self.layers.append(nn.Linear(input_dim, hidden_dims[0]))
         self.layers.append(self.activation)
         self.layers.append(nn.BatchNorm1d(hidden_dims[0]))
-        self.layers.append(nn.Dropout(0.4))  # Higher dropout for first layer
+        self.layers.append(nn.Dropout(dropout_rate))  # Higher dropout for first layer
 
         # Hidden layers with residual connections when possible
         for i in range(len(hidden_dims) - 1):
@@ -49,15 +49,15 @@ class EmbeddingRegressorNet(nn.Module):
             self.layers.append(nn.BatchNorm1d(hidden_dims[i + 1]))
 
             # Gradually decrease dropout as we go deeper
-            dropout_rate = max(0.1, 0.4 - 0.05 * i)
-            self.layers.append(nn.Dropout(dropout_rate))
+            layer_dropout_rate = max(dropout_rate * 0.3, dropout_rate - 0.05 * i)
+            self.layers.append(nn.Dropout(layer_dropout_rate))
 
         # Final hidden layer with reduced dropout
         self.pre_output = nn.Sequential(
             nn.Linear(hidden_dims[-1], hidden_dims[-1]),
             self.activation,
             nn.BatchNorm1d(hidden_dims[-1]),
-            nn.Dropout(0.1),
+            nn.Dropout(dropout_rate * 0.3),
         )
 
         # Output layer
@@ -328,8 +328,9 @@ def train_torch_regressor(
 
     if architecture_type == "embedding_regressor":
         # Use original EmbeddingRegressorNet
+        dropout_rate = arch_params.get('dropout_rate', 0.3)
         model = EmbeddingRegressorNet(
-            input_dim=input_dim, output_dim=output_dim, hidden_dims=hidden_dims
+            input_dim=input_dim, output_dim=output_dim, hidden_dims=hidden_dims, dropout_rate=dropout_rate
         ).to(device)
     else:
         # Use new architectures

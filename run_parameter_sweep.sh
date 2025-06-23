@@ -27,10 +27,13 @@ DEFAULT_EPSILON="0.1"
 DEFAULT_KERNEL="rbf"
 DEFAULT_GAMMA="scale"
 DEFAULT_DEGREE="3"
-DEFAULT_N_ESTIMATORS="100"
+DEFAULT_N_ESTIMATORS="10"
+DEFAULT_MAX_DEPTH="5"
 DEFAULT_ALPHA="1.0"
 DEFAULT_BATCH_SIZE="128"
 DEFAULT_EPOCHS="100"
+DEFAULT_LEARNING_RATE="0.0008"
+DEFAULT_DROPOUT_RATE="0.3"
 DEFAULT_NORMALIZE_TARGETS="false"
 
 # Experiment tracking
@@ -86,7 +89,8 @@ show_usage() {
     echo "    degree                    Poly kernel degree: 2,3,4,5"
     echo ""
     echo "  Random Forest Parameters:"
-    echo "    n_estimators              Number of trees: 50,100,200,300,500"
+    echo "    n_estimators              Number of trees: 5,10,20"
+    echo "    max_depth                 Maximum tree depth: 3,5,7"
     echo ""
     echo "  Linear Model Parameters:"
     echo "    alpha                     Regularization: 0.001,0.01,0.1,1.0,10.0,100.0"
@@ -94,6 +98,8 @@ show_usage() {
     echo "  Neural Network Parameters:"
     echo "    batch_size                Batch size: 32,64,128,256,512"
     echo "    epochs                    Training epochs: 50,100,200,300"
+    echo "    learning_rate             Learning rate: 0.0001,0.0005,0.001,0.005,0.01"
+    echo "    dropout_rate              Dropout rate: 0.1,0.2,0.3,0.4,0.5"
     echo ""
     echo "Examples:"
     echo ""
@@ -110,7 +116,10 @@ show_usage() {
     echo "  ./run_parameter_sweep.sh --sweep-type single-param --param normalize_targets --values \"true,false\""
     echo ""
     echo "  # RF tree count optimization"
-    echo "  ./run_parameter_sweep.sh --sweep-type single-param --param n_estimators --values \"50,100,200,300,500\" --baseline-model rf"
+    echo "  ./run_parameter_sweep.sh --sweep-type single-param --param n_estimators --values \"5,10,20\" --baseline-model rf"
+    echo ""
+    echo "  # RF tree depth optimization"
+    echo "  ./run_parameter_sweep.sh --sweep-type single-param --param max_depth --values \"3,5,7\" --baseline-model rf"
     echo ""
 }
 
@@ -225,6 +234,9 @@ run_single_param_sweep() {
         "n_estimators")
             extra_args="--n_estimators $value"
             ;;
+        "max_depth")
+            extra_args="--max_depth $value"
+            ;;
         "alpha")
             extra_args="--alpha $value"
             ;;
@@ -233,6 +245,12 @@ run_single_param_sweep() {
             ;;
         "epochs")
             extra_args="--epochs $value"
+            ;;
+        "learning_rate")
+            extra_args="--learning_rate $value"
+            ;;
+        "dropout_rate")
+            extra_args="--dropout_rate $value"
             ;;
         *)
             print_error "Unknown parameter: $param"
@@ -255,6 +273,7 @@ run_single_param_sweep() {
                 ;;
             "rf")
                 if [ "$param" != "n_estimators" ]; then extra_args="$extra_args --n_estimators $DEFAULT_N_ESTIMATORS"; fi
+                if [ "$param" != "max_depth" ]; then extra_args="$extra_args --max_depth $DEFAULT_MAX_DEPTH"; fi
                 ;;
             "ridge" | "lasso")
                 if [ "$param" != "alpha" ]; then extra_args="$extra_args --alpha $DEFAULT_ALPHA"; fi
@@ -262,6 +281,8 @@ run_single_param_sweep() {
             "torch")
                 if [ "$param" != "batch_size" ]; then extra_args="$extra_args --batch_size $DEFAULT_BATCH_SIZE"; fi
                 if [ "$param" != "epochs" ]; then extra_args="$extra_args --epochs $DEFAULT_EPOCHS"; fi
+                if [ "$param" != "learning_rate" ]; then extra_args="$extra_args --learning_rate $DEFAULT_LEARNING_RATE"; fi
+                if [ "$param" != "dropout_rate" ]; then extra_args="$extra_args --dropout_rate $DEFAULT_DROPOUT_RATE"; fi
                 ;;
             esac
         fi

@@ -97,12 +97,12 @@ def optimize_rf_hyperparameters(
     """
 
     def objective(trial):
-        # Define hyperparameters to optimize
+        # Define hyperparameters to optimize - reduced ranges for faster training
         params = {
-            "n_estimators": trial.suggest_int("n_estimators", 50, 500),
-            "max_depth": trial.suggest_int("max_depth", 5, 50),
-            "min_samples_split": trial.suggest_int("min_samples_split", 2, 20),
-            "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 10),
+            "n_estimators": trial.suggest_categorical("n_estimators", [5, 10, 20]),
+            "max_depth": trial.suggest_categorical("max_depth", [3, 5, 7]),
+            "min_samples_split": trial.suggest_int("min_samples_split", 2, 10),
+            "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 5),
         }
 
         # Train model with suggested hyperparameters
@@ -287,6 +287,7 @@ def optimize_torch_hyperparameters(
                 learning_rate=learning_rate,
                 device=device,
                 hidden_dims=hidden_dims,
+                dropout_rate=dropout_rate,
                 patience=20,  # Lower patience for optimization
                 verbose=False,  # Disable verbose output during optimization
             )

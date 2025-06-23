@@ -113,7 +113,10 @@ def parse_args():
     )
 
     # Model hyperparameters
-    parser.add_argument("--n_estimators", type=int, default=100)
+    parser.add_argument("--n_estimators", type=int, default=10)
+    parser.add_argument(
+        "--max_depth", type=int, default=5, help="Maximum depth for Random Forest trees"
+    )
     parser.add_argument("--alpha", type=float, default=1.0)
 
     # SVM hyperparameters
@@ -140,6 +143,18 @@ def parse_args():
     # PyTorch model parameters
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=256)  # Updated default
+    parser.add_argument(
+        "--learning_rate",
+        type=float,
+        default=0.0008,
+        help="Learning rate for neural network training",
+    )
+    parser.add_argument(
+        "--dropout_rate",
+        type=float,
+        default=0.3,
+        help="Dropout rate for neural network regularization",
+    )
 
     # Hyperparameter optimization parameters
     parser.add_argument(
@@ -221,7 +236,7 @@ def parse_args():
         use_mlflow=True,
         use_gpu=True,
         save_features=True,
-        load_features=False,
+        load_features=True,
         save_dataset=True,
         load_dataset=True,
         normalize_targets=False,

@@ -53,14 +53,17 @@ show_usage() {
     echo "    └── normalization-impact Target normalization effects"
     echo ""
     echo "  rf-optimization          Random Forest optimization"
-    echo "    └── rf-trees             Number of estimators tuning"
+    echo "    ├── rf-trees             Number of estimators tuning"
+    echo "    └── rf-depth             Tree depth optimization"
     echo ""
     echo "  linear-analysis          Linear model analysis"
     echo "    └── linear-regularization Ridge/Lasso alpha tuning"
     echo ""
     echo "  neural-optimization      Neural network optimization"
     echo "    ├── nn-batch-size        Batch size impact"
-    echo "    └── nn-epochs            Training duration analysis"
+    echo "    ├── nn-epochs            Training duration analysis"
+    echo "    ├── nn-learning-rate     Learning rate optimization"
+    echo "    └── nn-dropout           Dropout regularization analysis"
     echo ""
     echo "  complete-analysis        All experiments (long running!)"
     echo ""
@@ -157,12 +160,18 @@ run_experiment_set() {
 
     "rf-trees")
         print_info "Running Random Forest trees optimization..."
-        $SWEEP_SCRIPT --sweep-type single-param --param n_estimators --values "50,100,200,300,500" --baseline-model rf $baseline_args $dry_run_flag $n_runs_flag
+        $SWEEP_SCRIPT --sweep-type single-param --param n_estimators --values "5,10,20" --baseline-model rf $baseline_args $dry_run_flag $n_runs_flag
+        ;;
+        
+    "rf-depth")
+        print_info "Running Random Forest depth optimization..."
+        $SWEEP_SCRIPT --sweep-type single-param --param max_depth --values "3,5,7" --baseline-model rf $baseline_args $dry_run_flag $n_runs_flag
         ;;
 
     "rf-optimization")
         print_info "Running Random Forest optimization..."
         run_experiment_set "rf-trees" "$dry_run" "rf" "$baseline_embedding" "$n_runs"
+        run_experiment_set "rf-depth" "$dry_run" "rf" "$baseline_embedding" "$n_runs"
         ;;
 
     "linear-regularization")
@@ -188,10 +197,22 @@ run_experiment_set() {
         $SWEEP_SCRIPT --sweep-type single-param --param epochs --values "50,100,200,300" --baseline-model torch $baseline_args $dry_run_flag $n_runs_flag
         ;;
 
+    "nn-learning-rate")
+        print_info "Running neural network learning rate analysis..."
+        $SWEEP_SCRIPT --sweep-type single-param --param learning_rate --values "0.0001,0.0005,0.001,0.005,0.01" --baseline-model torch $baseline_args $dry_run_flag $n_runs_flag
+        ;;
+
+    "nn-dropout")
+        print_info "Running neural network dropout analysis..."
+        $SWEEP_SCRIPT --sweep-type single-param --param dropout_rate --values "0.1,0.2,0.3,0.4,0.5" --baseline-model torch $baseline_args $dry_run_flag $n_runs_flag
+        ;;
+
     "neural-optimization")
         print_info "Running neural network optimization..."
         run_experiment_set "nn-batch-size" "$dry_run" "torch" "$baseline_embedding" "$n_runs"
         run_experiment_set "nn-epochs" "$dry_run" "torch" "$baseline_embedding" "$n_runs"
+        run_experiment_set "nn-learning-rate" "$dry_run" "torch" "$baseline_embedding" "$n_runs"
+        run_experiment_set "nn-dropout" "$dry_run" "torch" "$baseline_embedding" "$n_runs"
         ;;
 
     "complete-analysis")
