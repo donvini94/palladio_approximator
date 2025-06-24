@@ -1,287 +1,247 @@
-# Performance Prediction from DSL Models
+# Palladio Performance Approximator
 
-This project predicts system performance metrics (avg/min/max response time) from software architecture DSL files.
+Machine learning-based performance prediction for Palladio Component Model (PCM) architecture specifications. This project predicts system performance metrics (response times) from software architecture DSL files using various ML models and embedding techniques.
 
----
+## 🚀 Quick Start
 
-## 🔧 Features
-
-- 🧾 Summary statistics prediction (avg, min, max response time)
-- 🔍 Embedding methods:
-  - `TF-IDF`
-  - `BERT (bert-base-uncased)`
-  - `LLaMA` (Code-LLaMA 7B)
-- 🧠 Model types:
-  - `Random Forest`
-  - `Ridge` / `Lasso` Regression
-  - `PyTorch Neural Network`
-- 🔄 Dataset and feature caching for faster iterations
-- 🔁 Optional MLflow experiment tracking
-- 📦 Cleanly modular & easily extensible
-
----
-
-## 📁 Project Structure
-```
-palladio_approximator/
-├── data/
-│   ├── dsl_models/         # .tpcm files (DSL)
-│   └── measurements/       # .csv files (Response Time [s])
-├── dataset.py              # Loads and preprocesses DSL + CSV
-├── feature_extraction.py   # TF-IDF, BERT, and LLaMA embeddings
-├── features/
-├── models/
-│   ├── rf_model.py         # Random forest trainer
-│   ├── linear_model.py     # Ridge / Lasso trainer
-│   └── torch_model.py      # PyTorch neural network model
-├── evaluate.py             # Reusable model evaluation
-├── train.py                # Unified training script
-├── requirements.txt
-└── README.md
-```
-
----
-
-## 🚀 How to Use
-
-### 1. Prepare your data
-- Place `.tpcm` files in `data/dsl_models/`
-- Place matching `.csv` files in `data/measurements/`
-- Files must have the same base name, e.g., `foo.tpcm` + `foo.csv`
-- Alternatively, use `collect_files.py` to gather data from PCMs directory
-
-### 2. Install dependencies
-
-#### Using Nix (for development)
+### Setup
 ```bash
+# Using Nix (recommended for development)
 nix develop
-```
 
-#### Using Docker (for experiments)
-```bash
-./run.sh build   # Build the Docker image
-./run.sh bash    # Start a bash shell in the container
-```
+# Using Docker (recommended for experiments)
+scripts/run.sh build
 
-#### Using pip
-```bash
+# Using pip
 pip install -r requirements.txt
 ```
 
----
-
-## 🧪 Example Commands
-
-### ➤ Train Random Forest with TF-IDF (baseline)
+### Basic Training
 ```bash
-python train.py --model rf --embedding tfidf --prediction_mode summary
+# Train Random Forest with BERT embeddings
+python train.py --model rf --embedding bert --prediction_mode summary
+
+# Train SVM with TF-IDF embeddings
+python train.py --model svm --embedding tfidf --prediction_mode summary
 ```
 
-### ➤ Train Ridge Regression with TF-IDF
+## 📊 Thesis Experiments (Recommended)
+
+The `run_thesis_experiments.sh` script provides systematic parameter sweeps for thesis analysis:
+
+### Available Experiment Sets
+
 ```bash
-python train.py --model ridge --embedding tfidf --alpha 0.5
+# Complete SVM hyperparameter analysis
+bash scripts/run_thesis_experiments.sh --experiment-set svm-analysis --baseline-embedding bert
+
+# Random Forest optimization
+bash scripts/run_thesis_experiments.sh --experiment-set rf-optimization --baseline-embedding bert
+
+# Model architecture comparison
+bash scripts/run_thesis_experiments.sh --experiment-set model-comparison
+
+# Neural network optimization
+bash scripts/run_thesis_experiments.sh --experiment-set neural-optimization --baseline-embedding bert
+
+# Linear model analysis
+bash scripts/run_thesis_experiments.sh --experiment-set linear-analysis
+
+# Complete analysis (all experiments - long running!)
+bash scripts/run_thesis_experiments.sh --experiment-set complete-analysis
 ```
 
-### ➤ Train with BERT embeddings on GPU
+### Individual Parameter Studies
+
 ```bash
-python train.py --model rf --embedding bert --use_cuda
+# SVM regularization parameter impact
+bash scripts/run_thesis_experiments.sh --experiment-set svm-regularization
+
+# SVM kernel comparison
+bash scripts/run_thesis_experiments.sh --experiment-set svm-kernels
+
+# Embedding method comparison
+bash scripts/run_thesis_experiments.sh --experiment-set embedding-impact
+
+# Target normalization impact
+bash scripts/run_thesis_experiments.sh --experiment-set normalization-impact
 ```
 
-### ➤ Enable MLflow tracking
+### Options
 ```bash
-python train.py --model rf --embedding bert --use_cuda --use_mlflow
+# Dry run to see what would be executed
+bash scripts/run_thesis_experiments.sh --experiment-set svm-analysis --dry-run
+
+# Specify number of runs per experiment
+bash scripts/run_thesis_experiments.sh --experiment-set rf-optimization --n-runs 5
+
+# Override baseline configuration
+bash scripts/run_thesis_experiments.sh --experiment-set svm-analysis --baseline-model svm --baseline-embedding bert
 ```
 
+## 🔧 Manual Training & Hyperparameter Search
 
-### ➤ Dataset Caching (enabled by default)
+### Core Training Script
+
+The `train.py` script supports extensive configuration:
+
 ```bash
-# Save/load dataset from cache (default)
-python train.py --model rf --embedding tfidf
+# Basic usage
+python train.py --model MODEL --embedding EMBEDDING --prediction_mode MODE
 
-# Disable dataset caching
-python train.py --model rf --embedding tfidf --no_load_dataset --no_save_dataset
+# With hyperparameter optimization
+python train.py --model svm --embedding bert --optimize_hyperparameters --n_trials 50
+
+# With specific parameters
+python train.py --model svm --embedding bert --C 10.0 --kernel rbf --gamma scale
 ```
 
-### ➤ Using Docker
+### Available Models
+- **`rf`** - Random Forest
+- **`svm`** - Support Vector Machine
+- **`ridge`** - Ridge Regression  
+- **`lasso`** - Lasso Regression
+- **`torch`** - Neural Network (PyTorch)
+
+### Available Embeddings
+- **`tfidf`** - TF-IDF vectorization
+- **`bert`** - BERT embeddings (bert-base-uncased)
+- **`llama`** - CodeLLaMA embeddings
+
+### Hyperparameters by Model
+
+**Random Forest:**
 ```bash
-./run.sh train rf bert summary
+python train.py --model rf --n_estimators 100 --max_depth 10
 ```
 
----
-
-## 📊 Output Files
-- Trained models: `rf_model.pkl`, `ridge_model.pkl`, etc.
-- Embedding models: `tfidf_embedding.pkl`, or BERT model/tokenizer objects
-- `data/all_samples.csv`: Preprocessed dataset
-- `data/cache/dataset_splits.pkl`: Cached dataset (if enabled)
-- `features/*.pkl`: Cached extracted features (if enabled)
-- `features/llama_embeddings/*.npy`: Pre-computed LLaMA embeddings (if generated)
-- `features/llama_embeddings/embedding_metadata.json`: Metadata for pre-computed embeddings
-
----
-
-## 📌 Notes on Reproducibility
-- All model hyperparameters are logged.
-- `--use_mlflow` stores experiments with:
-  - Model type
-  - Embedding method
-  - Prediction mode
-  - Key metrics
-  - Model files
-- This enables detailed experiment comparisons in the MLflow UI.
-
----
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  File Breakdown & Usage Guide
-
-  1. Core Training & Experiment Files
-
-  train.py - Main training script
-  - Purpose: Train models and log to MLflow
-  - Usage: python train.py --model rf --embedding tfidf --prediction_mode summary
-  - Output: Model artifacts, MLflow metrics
-
-  summarize_experiments.py - Experiment analysis
-  - Purpose: Extract and summarize all MLflow experiments
-  - Usage: python summarize_experiments.py --output results.csv --format both
-  - Output: CSV summaries, markdown reports
-
-  2. Visualization & Figure Generation
-
-  utils/visualize.py - Main visualization module
-  - Purpose: Generate all plots and figures
-  - Functions:
-    - create_experiment_dashboard() - Overall performance dashboard
-    - prediction_error_analysis() - Prediction vs actual plots
-    - visualize_embedding_space() - Embedding visualizations
-    - generate_learning_curves() - Learning curve analysis
-
-  visualize_training.py - Training visualization script
-  - Purpose: Visualize training metrics from MLflow
-  - Usage: python visualize_training.py
-  - Output: Training loss curves, metric plots
-
-  3. Analysis & Metrics Files
-
-  analyze.py - Deep analysis script
-  - Purpose: Comprehensive model analysis
-  - Usage: python analyze.py --model_path model.pkl
-  - Output: Performance analysis, error breakdowns
-
-  utils/metrics_context.py - Advanced metrics
-  - Purpose: Baseline comparisons, performance interpretation
-  - Functions: Baseline metrics, normalized metrics, performance categorization
-
-  4. Data Processing
-
-  dataset.py - Dataset management
-  - Purpose: Load/process Palladio data
-  - Auto-used: By train.py and other scripts
-
-  feature_extraction.py - Feature generation
-  - Purpose: TF-IDF, BERT, LLaMA embeddings
-  - Auto-used: By train.py
-
-  How to Get Your Metrics & Figures
-
-  Step 1: Train Models
-
-  # Train different model configurations
-  python train.py --model rf --embedding tfidf --use_mlflow
-  python train.py --model svm --embedding bert --use_mlflow
-  python train.py --model torch --embedding llama --use_mlflow
-
-  Step 2: Generate Experiment Summary
-
-  # Get comprehensive experiment results
-  python summarize_experiments.py --output thesis_results --format both
-
-  # Filter specific models
-  python summarize_experiments.py --filter-model rf --output rf_results.csv
-
-  Step 3: Generate Figures
-
-  # Method 1: Use visualization test script
-  python run_visualization_test.sh
-
-  # Method 2: Create custom visualizations
-  python -c "
-  from utils.visualize import create_experiment_dashboard, prediction_error_analysis
-  create_experiment_dashboard()  # Creates performance comparison plots
-  "
-
-  # Method 3: Generate training curves
-  python visualize_training.py
-
-  Step 4: Analysis & Interpretation
-
-  # Deep analysis of best model
-  python analyze.py --model_path best_model.pkl
-
-  # Get baseline comparisons and interpretations
-  python -c "
-  from utils.metrics_context import get_baseline_metrics, create_metrics_interpretation
-  # [analysis code]
-  "
-
-  Expected Output Locations
-
-  - Figures: figures/ directory
-    - performance/ - Model comparison plots
-    - predictions/ - Prediction vs actual plots
-    - embeddings/ - Embedding visualizations
-    - learning_curves/ - Training progression plots
-  - Experiment Data:
-    - experiment_summary_[timestamp].csv - All experiments
-    - experiment_summary_[timestamp].md - Markdown report
-  - MLflow: mlruns/ directory (view with mlflow ui)
-
-  Quick Start for Thesis Figures
-
-  # 1. Train a few models
-  python train.py --model rf --embedding tfidf
-  python train.py --model svm --embedding bert
-  python train.py --model torch --embedding llama
-
-  # 2. Generate all figures and summaries
-  python summarize_experiments.py --format both
-  python run_visualization_test.sh
-
-  # 3. Check outputs
-  ls figures/  # Your plots are here
-  cat experiment_summary_*.md  # Your results summary
+**SVM:**
+```bash
+python train.py --model svm --C 1.0 --epsilon 0.1 --kernel rbf --gamma scale
+```
+
+**Neural Network:**
+```bash
+python train.py --model torch --epochs 200 --batch_size 128 --learning_rate 0.001 --dropout_rate 0.3
+```
+
+**Linear Models:**
+```bash
+python train.py --model ridge --alpha 1.0
+python train.py --model lasso --alpha 0.1
+```
+
+### Hyperparameter Optimization
+
+Enable automatic hyperparameter search:
+```bash
+# Bayesian optimization with Optuna
+python train.py --model svm --embedding bert --optimize_hyperparameters --n_trials 100
+
+# Specify optimization metric
+python train.py --model rf --optimize_hyperparameters --optimization_metric val_r2
+```
+
+### Advanced Options
+
+```bash
+# Target normalization
+python train.py --model svm --normalize_targets
+
+# GPU usage (for neural networks and BERT)
+python train.py --model torch --embedding bert --use_cuda
+
+# MLflow experiment tracking
+python train.py --model rf --use_mlflow
+
+# Architecture comparison for neural networks
+python train.py --model torch --compare_architectures --architectures_to_compare embedding_regressor,standard,residual
+```
+
+## 📈 Results Analysis
+
+### Experiment Summarization
+```bash
+# Generate comprehensive results summary
+python scripts/summarize_experiments.py --format both
+
+# Filter by model or embedding
+python scripts/summarize_experiments.py --filter-model rf --format csv
+python scripts/summarize_experiments.py --filter-embedding bert --format markdown
+```
+
+### Figure Generation
+```bash
+# Generate thesis-quality figures for specific models
+bash scripts/create_thesis_figures.sh --model-type svm --test-metrics
+bash scripts/create_thesis_figures.sh --model-type rf --output-dir my_figures
+
+# Generate all model figures
+bash scripts/create_thesis_figures.sh --model-type all
+```
+
+### MLflow UI
+```bash
+# Start MLflow web interface
+scripts/run.sh mlflow
+# Open http://localhost:5000 in browser
+```
+
+## 🏗️ Project Structure
+
+```
+palladio_approximator/
+├── scripts/                     # Execution scripts
+│   ├── run_thesis_experiments.sh  # Systematic parameter sweeps
+│   ├── run_parameter_sweep.sh     # Single parameter analysis
+│   ├── create_thesis_figures.sh   # Figure generation
+│   ├── run.sh                     # Main Docker interface
+│   └── *.py                      # Utility scripts
+├── models/                      # Model implementations
+│   ├── rf_model.py             # Random Forest
+│   ├── svm_model.py            # Support Vector Machine
+│   ├── linear_model.py         # Ridge/Lasso
+│   └── torch_model.py          # Neural Networks
+├── utils/                       # Utilities
+│   ├── visualize.py            # Plotting functions
+│   ├── model_trainer.py        # Training logic
+│   └── hyperparameter_optimization.py
+├── data/                        # Datasets
+├── train.py                     # Main training script
+├── evaluate.py                  # Model evaluation
+└── dataset.py                   # Data loading
+```
+
+## 🔬 Data Requirements
+
+- **Input:** `.tpcm` files (Palladio Component Models) in `data/` or `PCMs/`
+- **Labels:** Performance measurements (response times)
+- **Format:** Matched pairs - `model.tpcm` requires corresponding performance data
+
+## 📊 Output
+
+- **Models:** Saved in `models/saved/`
+- **Figures:** Generated in `thesis_figures/` or `figures/`
+- **Results:** CSV/Markdown summaries via `summarize_experiments.py`
+- **MLflow:** Experiment tracking in `mlruns/`
+
+## 🎯 Thesis Workflow Recommendation
+
+1. **Systematic Experiments:**
+   ```bash
+   bash scripts/run_thesis_experiments.sh --experiment-set svm-analysis --baseline-embedding bert
+   bash scripts/run_thesis_experiments.sh --experiment-set model-comparison
+   ```
+
+2. **Generate Figures:**
+   ```bash
+   bash scripts/create_thesis_figures.sh --model-type all --test-metrics
+   ```
+
+3. **Results Analysis:**
+   ```bash
+   python scripts/summarize_experiments.py --format both
+   scripts/run.sh mlflow  # for detailed analysis
+   ```
+
+This workflow provides systematic, reproducible experiments suitable for thesis documentation.

@@ -13,7 +13,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-SWEEP_SCRIPT="bash ./run_parameter_sweep.sh"
+SWEEP_SCRIPT="bash scripts/run_parameter_sweep.sh"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
 # Function to print colored output
@@ -282,8 +282,8 @@ if [ -z "$EXPERIMENT_SET" ]; then
 fi
 
 # Check if sweep script exists
-if [ ! -f "./run_parameter_sweep.sh" ]; then
-    print_error "Parameter sweep script not found: ./run_parameter_sweep.sh"
+if [ ! -f "scripts/run_parameter_sweep.sh" ]; then
+    print_error "Parameter sweep script not found: scripts/run_parameter_sweep.sh"
     exit 1
 fi
 
@@ -324,8 +324,8 @@ print_info "Completed at: $(date)"
 print_info "========================================="
 
 print_info "Next steps:"
-print_info "1. Run: ./run.sh summarize --format both"
-print_info "2. Check: ./run.sh mlflow (for detailed analysis)"
+print_info "1. Run: scripts/run.sh summarize --format both"
+print_info "2. Check: scripts/run.sh mlflow (for detailed analysis)"
 print_info "3. Generate figures with visualization scripts"
 
 exit 0

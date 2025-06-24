@@ -175,6 +175,12 @@ def clean_and_prepare_data(df: pd.DataFrame) -> pd.DataFrame:
         if col in df.columns:
             df = df.dropna(subset=[col])
 
+    # Filter to only include desired n_estimators values (5, 10, 20)
+    if "params.n_estimators" in df.columns:
+        valid_n_estimators = [5, 10, 20]
+        df = df[df["params.n_estimators"].isin(valid_n_estimators)].copy()
+        print(f"Filtered to n_estimators values: {valid_n_estimators}")
+
     print(f"Data prepared: {len(df)} runs remaining")
     return df
 
@@ -250,8 +256,15 @@ def create_consolidated_plot(
     # Create the plot
     fig, ax = plt.subplots(figsize=(12, 7))
 
-    # Sort parameter values for better visualization (both are numeric)
-    all_param_values = sorted(embedding_data[param_col].dropna().unique())
+    # Sort parameter values for better visualization
+    if param == "n_estimators":
+        # Only use the desired values in the correct order
+        desired_values = [5, 10, 20]
+        actual_values = embedding_data[param_col].dropna().unique()
+        all_param_values = [v for v in desired_values if v in actual_values]
+    else:
+        # For other parameters (max_depth), sort all available values
+        all_param_values = sorted(embedding_data[param_col].dropna().unique())
 
     # Prepare data for plotting
     valid_param_values = []

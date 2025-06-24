@@ -158,8 +158,8 @@ run_figure_generation() {
     esac
     
     # Check if Python script exists
-    if [ ! -f "$script_name" ]; then
-        print_error "$script_name not found!"
+    if [ ! -f "scripts/$script_name" ]; then
+        print_error "scripts/$script_name not found!"
         return 1
     fi
     
@@ -178,7 +178,7 @@ run_figure_generation() {
     mkdir -p "$output_subdir"
     
     # Build the command
-    CMD="python3 $script_name --output-dir \"$output_subdir\""
+    CMD="python3 scripts/$script_name --output-dir \"$output_subdir\""
     
     if [ -n "$EXPERIMENT_NAME" ]; then
         CMD="$CMD --experiment-name \"$EXPERIMENT_NAME\""

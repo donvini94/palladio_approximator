@@ -319,7 +319,7 @@ if [[ "$1" == "summarize" ]]; then
         -v "$(pwd)/mlruns":/app/mlruns \
         --network host \
         -w /app \
-        registry.dumusstbereitsein.de/palladio_approximator python3 summarize_experiments.py \
+        registry.dumusstbereitsein.de/palladio_approximator python3 scripts/summarize_experiments.py \
         --format "$FORMAT" \
         --sort "$SORT_BY" \
         $FILTER_MODEL \
@@ -343,7 +343,7 @@ if [[ "$1" == "performance-summary" ]]; then
         -v "$(pwd)/mlruns":/app/mlruns \
         --network host \
         -w /app \
-        registry.dumusstbereitsein.de/palladio_approximator python3 summarize_performance.py $RUN_ID
+        registry.dumusstbereitsein.de/palladio_approximator python3 scripts/summarize_performance.py $RUN_ID
     exit 0
 fi
 
@@ -376,5 +376,5 @@ echo "  ./run.sh summarize --model rf --embedding bert"
 echo "  ./run.sh summarize --sort val_mse --format markdown"
 echo ""
 echo "Convenience Scripts:"
-echo "  ./run_experiments.sh --name quick    Run a predefined experiment batch (quick, full, rf-only, etc.)"
-echo "  ./run_experiments.sh --custom       Run experiments with custom parameters"
+echo "  scripts/run_experiments.sh --name quick    Run a predefined experiment batch (quick, full, rf-only, etc.)"
+echo "  scripts/run_experiments.sh --custom       Run experiments with custom parameters"

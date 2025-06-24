@@ -282,7 +282,7 @@ echo -e "${GREEN}===============================================================
 # Run MLflow summarization if MLflow was used
 if [[ "$USE_MLFLOW" != "--no_mlflow" ]]; then
     echo -e "${BLUE}Generating MLflow experiment summary...${NC}" | tee -a "$LOG_FILE"
-    python summarize_experiments.py --format markdown --sort val_r2 > "$OUTPUT_DIR/mlflow_summary.md"
+    python scripts/summarize_experiments.py --format markdown --sort val_r2 > "$OUTPUT_DIR/mlflow_summary.md"
 fi
 
 echo -e "${GREEN}All tasks completed! Check $OUTPUT_DIR for all results.${NC}"
